@@ -56,6 +56,33 @@ def main():
     hindi_raw = "\u0930\u093e\u092e \u092e\u093e\u0930\u094d\u0915\u0947\u091f\u093f\u0902\u0917"
     hindi = pp.normalize_name(hindi_raw)
     assert hindi != "" and "\u093e" in hindi, "Devanagari matras must survive"
+    # UTF-8-as-Latin-1 mojibake punctuation is dropped, real accents stay
+    assert pp.normalize_text("Sector Â\u0080\u0093 V") == "sector v"
+    assert pp.normalize_text("Tvdâ\u0080\u0099s Colony") == "tvd s colony"
+    assert pp.normalize_text("Château") == "chateau"
+    # French legal forms, incl. dotted acronyms, are stripped
+    for raw, exp in [("Ensemble & Fils SASU", "ensemble fils"),
+                     ("Mountain Club S.A.R.L.", "mountain club"),
+                     ("ZSJ Club E.U.R.L.", "zsj club"),
+                     ("ETS POSTIERS SARL CIE", "ets postiers"),
+                     ("Chasseurs (France) Services SCI", "chasseurs france services"),
+                     ("Toute & Cie SAS", "toute"),
+                     ("A.P Management Pvt. Ltd.", "ap management"),
+                     ("Acme L.L.C.", "acme")]:
+        got = pp.normalize_name(raw)
+        assert got == exp, (raw, got, exp)
+    # "private limited" / "pvt ltd" / "llp" in every Indic script seen in data
+    for raw in ["राम प्राइवेट लिमिटेड", "राम प्रा. लि.",
+                "राम एलएलपी", "ராம் பிரைவேட் லிமிடெட்", "ராம் எல்எல்பி",
+                "రామ్ ప్రైవేట్ లిమిటెడ్", "రామ్ ఎల్‌ఎల్‌పీ",
+                "ರಾಮ್ ಪ್ರೈವೇಟ್ ಲಿಮಿಟೆಡ್", "ರಾಮ್ ಎಲ್ಎಲ್‌ಪಿ",
+                "রাম প্রাইভেট লিমিটেড", "রাম এলএলপি",
+                "રામ પ્રાઇવેટ લિમિટેડ", "રામ પ્રા. લિ.", "રામ એલએલપી",
+                "രാം പ്രൈവറ്റ് ലിമിറ്റഡ്", "രാം എൽഎൽപി",
+                "ରାମ ପ୍ରାଇଭେଟ୍ ଲିମିଟେଡ୍", "ରାମ ଏଲ୍‌ଏଲ୍‌ପି",
+                "ਰਾਮ ਪ੍ਰਾਈਵੇਟ ਲਿਮਟਿਡ", "ਰਾਮ ਪ੍ਰਾ. ਲਿ.", "ਰਾਮ ਐਲਐਲਪੀ"]:
+        got = pp.normalize_name(raw)
+        assert len(got.split()) == 1, (raw, got)
     print("  'Orelee's Barbershop' ->", repr(pp.normalize_name("Orelee's Barbershop")))
     print("  'Prime Money Pvt. Ltd.' ->", repr(pp.normalize_name("Prime Money Pvt. Ltd.")))
     print("  Hindi name ->", repr(hindi)[:40], "... (non-empty, Devanagari preserved)")
@@ -112,11 +139,79 @@ def main():
     print("  N7 canopy shared by 'muller trading co' and 'mular trading  co': OK")
     print("  hindi-only names: N7 skipped, keys =", len(hindi_keys))
 
+    print("\n== address parsing ==")
+    # RAW addresses taken from train/test: comma components, shuffled order,
+    # no US ZIPs, Indian PINs written "600 102", French rows have no postcode
+    cases = [
+        # (raw address, country, expected pincode, expected state, expected city)
+        ("1795 Westchester Drive, High Point, NC", "US", "", "north carolina", "high point"),
+        ("105 ELM ST, MORGANTON, NC", "US", "", "north carolina", "morganton"),
+        # 5-digit house number is NOT a ZIP
+        ("17560 Ellis Road, Tahlequah, OK", "US", "", "oklahoma", "tahlequah"),
+        ("11973 Moorland Manor Court, Fl 0, Saint Louis, MO", "US", "", "missouri", "saint louis"),
+        # street name containing a state name / floor "Fl" must not win
+        ("6584 Delaware Crossing Street, Bldg 8, Reynoldsburg, OH", "US", "", "ohio", "reynoldsburg"),
+        ("Washington, 5649 Western Avenue, DC", "US", "", "district of columbia", "washington"),
+        ("265 Chrestman Lane, TX, Combine", "US", "", "texas", "combine"),
+        ("Riverhead, NY, 189 Trout Brook Lane", "US", "", "new york", "riverhead"),
+        ("Mack Rd, Haltom City, Texas", "US", "", "texas", "haltom city"),
+        ("2742 8th Terrace, Kansas City, KS", "US", "", "kansas", "kansas city"),
+        ("12 Main St, Springfield, MA 01104", "US", "01104", "massachusetts", "springfield"),
+        # city named like its state; city whose name ends in a street word
+        ("New York, NY, 162 105 Street", "US", "", "new york", "new york"),
+        ("12 Boardwalk, Pike Road, AL", "US", "", "alabama", "pike road"),
+        ("6505 225th Place, Mountlake Terrace, WA", "US", "", "washington", "mountlake terrace"),
+        ("H No 429 Mig Gh 14 Paschim Vihar, New Delhi, Delhi", "India", "", "delhi", "new delhi"),
+        ("Delhi, New Delhi, 25, Extension 2B Nangloi", "India", "", "delhi", "new delhi"),
+        # native-script state components map to the English state
+        ("#708 FLAT NO. A 13 TIRUPATI COMPLEX GORAKHPUR, JABALPUR, मध्य प्रदेश", "India", "", "madhya pradesh", "jabalpur"),
+        ("10 PRINCEP STREET, KOLKATA, পশ্চিমবঙ্গ", "India", "", "west bengal", "kolkata"),
+        ("H NO - 263, SULEBHAVI VILLAGE, HUNGUND, ಕರ್ನಾಟಕ", "India", "", "karnataka", "hungund"),
+        ("NO 6-3-347/6/N. , 5TH FR, N.V PLAZA, PANJAGUTTA, NAMPALLY, తెలంగాణ", "India", "", "telangana", "nampally"),
+        ("12 MG Road, Pune, महाराष्ट्र", "India", "", "maharashtra", "pune"),
+        # Indian state abbreviations / variants
+        ("12 MG Road, Pune, MH", "India", "", "maharashtra", "pune"),
+        ("LR Tower, South Janatha Road, Ernakulam, Keralam", "India", "", "kerala", "ernakulam"),
+        ("KH NO. -570/13, NEW DELHI, WEST DELHI, Delhi", "India", "", "delhi", "west delhi"),
+        ("L Block157 I Main Road, Anna Nagar, Chennai 600 102, Tamil Nadu", "India", "600102", "tamil nadu", "chennai"),
+        ("Plot No. M-5/8, Midc, Kupwad, Miraj, Sangli, Maharashtra", "India", "", "maharashtra", "sangli"),
+        ("Door No1/61, West Street, Kilangadu, Pudukkottai, Sivaganga, Tamil Nadu", "India", "", "tamil nadu", "sivaganga"),
+        # France: region column, departments map to their region, city found
+        # in any position, St-/St.- folded to saint
+        ("43 Rue des Phalempins, Tourcoing, Hauts-de-France", "France", "", "hauts de france", "tourcoing"),
+        ("Hauts-de-France, Dunkerque, 71 Rue de la Paix", "France", "", "hauts de france", "dunkerque"),
+        ("Loire-Atlantique, 19 BLVD DE LA PILOTIERE, NANTES", "France", "", "pays de la loire", "nantes"),
+        ("3 R. DE LA PAIX, PESSAC, Gironde", "France", "", "nouvelle aquitaine", "pessac"),
+        ("Nº 19 R. Verlaine, Lille", "France", "", "", "lille"),
+        ("Hauts-de-France, Avenue du Parc des Sports, Bat D, Roubaix, AV Fleming", "France", "", "hauts de france", "roubaix"),
+        ("1 Avenue Mgellan, Lège-cap-ferret", "France", "", "", "lege cap ferret"),
+        ("ST.-NAZAIRE, 5 Rue Jean Jaurès, Pays de la Loire", "France", "", "pays de la loire", "saint nazaire"),
+        ("9 Rue George Sand, Saint-Nazaire, Pays de la Loire", "France", "", "pays de la loire", "saint nazaire"),
+        ("12 Rue de la Paix, 75002 Paris", "France", "75002", "", "paris"),
+        # PO box numbers (BP / CS) are not postcodes; glued "59160LOMME" is
+        ("12 BIS BD FRANCOIS BLANCHO, BP 40413, NANTES, Pays de la Loire", "France", "", "pays de la loire", "nantes"),
+        ("11 RUE DE PRINQUIAU, BP82228, NANTES", "France", "", "", "nantes"),
+        ("13 R. G.CLEMENCEAU, 59160LOMME, LILLE, Hauts-de-France", "France", "59160", "hauts de france", "lille"),
+    ]
+    for addr, hint, exp_pin, exp_state, exp_city in cases:
+        p = pp.parse_address(addr, hint)
+        status = "OK " if (p["pincode"], p["state"], p["city"]) == \
+            (exp_pin, exp_state, exp_city) else "BAD"
+        print(f"  {status} {addr[:45]:<45} [{hint:<6}] -> pin={p['pincode']:<7} state={p['state']:<18} city={p['city']}")
+    for addr, hint, exp_pin, exp_state, exp_city in cases:
+        p = pp.parse_address(addr, hint)
+        assert (p["pincode"], p["state"], p["city"]) == \
+            (exp_pin, exp_state, exp_city), (addr, p)
+    # empty address safe
+    assert pp.parse_address("") == {"pincode": "", "state": "", "city": ""}
+    print("  all address cases OK")
+
     print("\n== full preprocess on tiny frames ==")
     combined = pp.preprocess({"S1": src1, "S2": src2}, gt)
     assert list(combined.columns) == [
         "entity_id", "source", "name_raw", "address_raw", "name_norm",
-        "address_norm", "name_ngrams", "address_ngrams", "name_ngram_count",
+        "address_norm", "pincode", "state", "city", "name_ngrams",
+        "address_ngrams", "name_ngram_count",
         "address_ngram_count", "name_phonetic", "canopy_ids", "country",
         "ground_truth"]
     row = combined[combined.entity_id == "S1-1"].iloc[0]
