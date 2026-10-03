@@ -131,33 +131,38 @@ def binary_metrics(y_true: np.ndarray, scores: np.ndarray, threshold: float) -> 
 def best_threshold_f05(y_true: np.ndarray, scores: np.ndarray) -> float:
     """Threshold maximizing F0.5 on the given (validation) scores.
 
-    Grid = midpoints between consecutive unique scores. Uses one sort
-    plus cumulative counts - O(n log n).
+    Grid = one candidate per cutoff k (0..n): 'classify the top-k scores
+    positive'. O(n log n): one sort + cumulative counts.
     """
     order = np.argsort(-scores, kind="mergesort")
     s_sorted = scores[order]
     y_sorted = y_true[order].astype(bool)
-
-    cum_tp = np.cumsum(y_sorted)
-    cum_n = np.arange(1, len(y_sorted) + 1)
+    n = len(s_sorted)
     total_pos = int(y_sorted.sum())
 
-    precision = cum_tp / cum_n
-    recall = cum_tp / total_pos if total_pos else np.zeros_like(cum_tp, dtype=float)
+    # k = number of items classified positive (0..n).
+    # tp(k) = cum_tp[k-1] (with tp(0)=0); fp(k) = k - tp(k); fn = total_pos - tp(k).
+    cum_tp = np.concatenate([[0], np.cumsum(y_sorted)])          # length n+1
+    k = np.arange(n + 1)
+    tp = cum_tp
+    fp = k - tp
+    fn = total_pos - tp
 
-    denom = 0.25 * precision + recall
-    f05 = np.where(denom > 0, 1.25 * precision * recall / np.where(denom > 0, denom, 1.0), 0.0)
+    p = np.where(k > 0, tp / np.maximum(k, 1), 0.0)
+    r = np.where(total_pos > 0, tp / max(total_pos, 1), 0.0)
+    denom = 0.25 * p + r
+    f05 = np.where(denom > 0, 1.25 * p * r / np.where(denom > 0, denom, 1.0), 0.0)
 
-    # cutoff i classifies the i highest scores positive
-    # threshold must satisfy: scores >= thr selects exactly those i
-    thr = np.empty(len(f05) + 1)
-    thr[0] = s_sorted[0] + 1.0          # classifies nothing positive
-    thr[1:-1] = (s_sorted[:-1] + s_sorted[1:]) / 2.0
-    thr[-1] = s_sorted[-1] - 1.0        # classifies everything positive
-    i = int(np.argmax(np.append(f05, 0.0)))   # prefer fewer positives on tie with 'none'
-    if i == len(f05):
-        return thr[0]
-    return float(thr[i]) if i > 0 else float(s_sorted[0] - 1.0)
+    k_best = int(np.argmax(f05))
+
+    # threshold that classifies exactly the top-k items positive:
+    # s_sorted is descending, so any value in (s_sorted[k], s_sorted[k-1]]
+    # works for 1 <= k <= n-1; k=0 -> above max; k=n -> below min.
+    if k_best == 0:
+        return float(s_sorted[0] + 1.0)
+    if k_best == n:
+        return float(s_sorted[-1] - 1.0)
+    return float((s_sorted[k_best - 1] + s_sorted[k_best]) / 2.0)
 
 
 # ============================================================

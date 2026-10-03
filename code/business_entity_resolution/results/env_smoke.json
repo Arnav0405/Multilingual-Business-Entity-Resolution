@@ -1,0 +1,10 @@
+{
+  "cosine_latin_latin": 0.9192,
+  "cosine_cross_silver_devanagari": 0.945,
+  "cosine_cross_alpha_telugu": 0.9646,
+  "cosine_hardneg_silver_trading": 0.9742,
+  "dim": 384,
+  "model_params_M": 117.7,
+  "torch": "2.14.1+cu130",
+  "cuda": true
+}
