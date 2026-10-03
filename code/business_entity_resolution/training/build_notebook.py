@@ -28,26 +28,31 @@ Phase-flagged notebook. Set `PHASE` and run all cells top-to-bottom.
 - **B** — pretrained `intfloat/multilingual-e5-small`, no fine-tuning; score all three splits
 - **C** — contrastive fine-tune (in-batch MNRL), then score with the fine-tuned encoder
 - **D** — contrastive + explicit hard negatives, then score
+- **ADDR** — phase 10: contrastive + hard negatives trained on `name_address` variant
+  (`Business name: ... | Address: ...` raw concatenation, MAX_LENGTH 128); answers
+  "does contextual address information improve multilingual entity resolution?"
 
 **Local artifacts this notebook uploads from your machine** (left panel → Files, or
 `google.colab.files.upload()`):
 
 1. `data/entity_resolution_subset/{train,val,test}_pairs.tsv` (~31 MB total)
-2. *(optional, phase C/D)* nothing else — the model downloads from HF hub directly
+2. *(optional, phase C/D/ADDR)* nothing else — the model downloads from HF hub directly
 
 **Local artifacts the notebook produces for download back** (~15 MB each):
 
-- `modelB_scores.parquet`, `modelC_scores.parquet`, `modelD_scores.parquet` — the score book
-- *(phase C/D)* `modelC_checkpoint.zip` / `modelD_checkpoint.zip` — fine-tuned weights, used
+- `modelB_scores.parquet`, `modelC_scores.parquet`, `modelD_scores.parquet`, `modelA_name_address_scores.parquet` — the score book
+- *(phase C/D/ADDR)* `modelC_checkpoint.zip` / `modelD_checkpoint.zip` / `modelA_name_address_checkpoint.zip` — fine-tuned weights, used
   by local scoring/eval, no need to keep them on Colab
 """),
 
     md("""## Setup
 """),
 
-    code("""PHASE = "B"   # "B" | "C" | "D"
-TEXT_VARIANT = "name"   # "name" | "name_address" (phase 10 experiment)
-assert PHASE in ("B", "C", "D")
+    code("""PHASE = "B"   # "B" | "C" | "D" | "ADDR"
+TEXT_VARIANT = "name"   # "name" | "name_address" (phase 10 experiment: set TEXT_VARIANT="name_address" with PHASE="ADDR")
+assert PHASE in ("B", "C", "D", "ADDR")
+if PHASE == "ADDR":
+    TEXT_VARIANT = "name_address"   # forced: the address experiment IS the variant
 assert TEXT_VARIANT in ("name", "name_address")
 """),
 
@@ -165,11 +170,15 @@ print(model.config.num_hidden_layers, 'layers,', sum(p.numel() for p in model.pa
     print('wrote /content/modelB_scores.parquet')
 """),
 
-    md("""## Phase C / D — contrastive training
+    md("""## Phase C / D / ADDR — contrastive training
 C: in-batch MNRL only. D: also appends stored hard negatives per sample.
+ADDR: D's trainer but on `name_address` strings with MAX_LENGTH=128
+(raw `Business name: ... | Address: ...` concatenation, no normalization).
 """),
     code("""import math, random
 from torch.utils.data import DataLoader, Dataset
+
+MAX_LENGTH = 128 if PHASE == 'ADDR' else 64   # address variant needs longer inputs
 
 class GroupPairs(Dataset):
     '''one item = one S1 group: anchor string, its positives, up to 4 stored hard negatives'''
@@ -183,27 +192,45 @@ class GroupPairs(Dataset):
             hard = neg[neg['pair_type'] == 'hard_negative'].head(max_hard)
             self.groups.append({
                 'anchor': str(pos['s1_name'].iloc[0]),
+                'anchor_address': str(pos['s1_address'].iloc[0]) if 's1_address' in pos.columns else '',
                 'positives': [str(x) for x in pos['candidate_name'].tolist()],
+                'positives_address': [str(x) for x in (pos['candidate_address'].tolist() if 'candidate_address' in pos.columns else [])],
                 'hards': [str(x) for x in hard['candidate_name'].tolist()],
+                'hards_address': [str(x) for x in (hard['candidate_address'].tolist() if 'candidate_address' in hard.columns else [])],
             })
     def __len__(self):
         return len(self.groups)
     def __getitem__(self, i):
         return self.groups[i]
 
-def collate(batch, tokenizer, max_length=MAX_LENGTH, max_pos=2, max_extra_neg=4):
+def _variant(item, kind, j, variant):
+    '''kind: anchor|pos|hard; j: which candidate within the kind.
+    name variant: plain candidate_name; name_address: raw concat string.'''
+    if variant == 'name':
+        return str(item['anchor'] if kind == 'anchor' else (
+            item['positives'][j] if kind == 'pos' else item['hards'][j]))
+    if kind == 'anchor':
+        return 'Business name: ' + item['anchor'] + ' | Address: ' + str(item.get('anchor_address', ''))
+    if kind == 'pos':
+        return 'Business name: ' + item['positives'][j] + ' | Address: ' + str(item['positives_address'][j])
+    return 'Business name: ' + item['hards'][j] + ' | Address: ' + str(item['hards_address'][j])
+
+def collate(batch, tokenizer, max_length=MAX_LENGTH, max_pos=2, max_extra_neg=4, variant=TEXT_VARIANT):
     '''Flattens each group into its top `max_pos` positives (anchor repeated
     per positive row); hard negatives are aligned PER ANCHOR ROW — exactly
     `max_extra_neg` per row (uniform K), the group's own stored hards first
     and the batch pool filling the rest (a pool entry is a valid negative
     for any anchor). Keeps h.shape[0] == a.shape[0] * K, which the train
-    loop's view() reshape needs. `max_extra_neg=0` for phase C.'''
+    loop's view() reshape needs. `max_extra_neg=0` for phase C.
+    variant selects raw-name vs name+address concatenation.'''
     anchors, positives, group_hards = [], [], []
     for item in batch:
-        a = item['anchor']
-        hs = list(item['hards'][:max_extra_neg]) if max_extra_neg else []
-        for p in item['positives'][:max_pos]:
-            anchors.append(a); positives.append(p); group_hards.append(hs)
+        hs = [_variant(item, 'hard', j, variant)
+              for j in range(min(len(item['hards']), max_extra_neg))] if max_extra_neg else []
+        for p_idx, p in enumerate(item['positives'][:max_pos]):
+            anchors.append(_variant(item, 'anchor', p_idx, variant))
+            positives.append(_variant(item, 'pos', p_idx, variant))
+            group_hards.append(hs)
     hards = []
     if max_extra_neg and any(group_hards):
         pool = []
@@ -219,9 +246,6 @@ def collate(batch, tokenizer, max_length=MAX_LENGTH, max_pos=2, max_extra_neg=4)
                 if len(distinct) >= fill_count:
                     extra = distinct[:fill_count]
                 else:
-                    # with-replacement fill to reach exactly K: a repeated
-                    # negative string is still a negative; a ragged hard
-                    # tensor crashes the train loop
                     src = distinct or pool
                     extra = [src[i % len(src)] for i in range(fill_count)] if src else []
                 own = own + extra
@@ -249,23 +273,27 @@ def dummy():
     pass
 """),
 
-    code("""if PHASE in ('C', 'D'):
+    code("""if PHASE in ('C', 'D', 'ADDR'):
+    # PHASE 'ADDR' = Model A' (name+address): same trainer as D (hard negatives),
+    # different text variant and longer inputs.
     train_df = load_pairs('train')
-    max_hard = 4 if PHASE == 'D' else 0
+    max_hard = 0 if PHASE == 'C' else 4
     ds = GroupPairs(train_df, max_hard=max_hard)
     print(f'{len(ds):,} S1 groups with >= 1 positive')
-    loader = DataLoader(ds, batch_size=64, shuffle=True,
-        collate_fn=lambda b: collate(b, tok, max_pos=2, max_extra_neg=max_hard), num_workers=2)
+    loader = DataLoader(ds, batch_size=32 if PHASE == 'ADDR' else 64, shuffle=True,
+        collate_fn=lambda b: collate(b, tok, max_pos=2, max_extra_neg=max_hard),
+        num_workers=2)
     steps = max(len(loader), 1)
     # NOTE: model stays fp32; autocast is applied per-forward in the train loop
+    # (fresh fp32 model, NOT the half=model above which is for scoring only)
     model = AutoModel.from_pretrained(MODEL_NAME).to(DEVICE).eval()
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-5, weight_decay=0.01)
-    SCHED_TOTAL = steps * 3   # default epochs=3
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=3e-5, total_steps=SCHED_TOTAL)
     EPOCHS = 3
+    SCHED_TOTAL = steps * EPOCHS
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=3e-5, total_steps=SCHED_TOTAL)
 """),
 
-    code("""if PHASE in ('C', 'D'):
+    code("""if PHASE in ('C', 'D', 'ADDR'):
     import time
     for epoch in range(1, EPOCHS + 1):
         t0 = time.time(); model.train(); skipped = 0
@@ -302,9 +330,9 @@ def dummy():
         tok.save_pretrained(ckpt)
 """),
 
-    md("""## Phase C / D — score with the fine-tuned encoder
+    md("""## Phase C / D / ADDR — score with the fine-tuned encoder
 """),
-    code("""if PHASE in ('C', 'D'):
+    code("""if PHASE in ('C', 'D', 'ADDR'):
     # load FRESH from the fine-tuned checkpoint (fp32->half for scoring only)
     LATEST = f'/content/model{PHASE}_epoch{EPOCHS}'
     model = AutoModel.from_pretrained(LATEST).to(DEVICE).eval()
@@ -319,18 +347,21 @@ def dummy():
         scores[split] = score_split(df, TEXT_VARIANT)
         assert np.isfinite(scores[split]).all(), f'{split}: non-finite scores'
         print(split, len(df), 'pairs, mean cos', float(np.mean(scores[split])))
+    out_name = 'modelA_name_address_scores.parquet' if PHASE == 'ADDR' else f'model{PHASE}_scores.parquet'
     pd.concat(
         [pd.DataFrame({'split': s, 'row_idx': load_pairs(s)['row_idx'], 'score': scores[s]}) for s in scores]
-    ).to_parquet(f'/content/model{PHASE}_scores.parquet', index=False)
-    print(f'wrote /content/model{PHASE}_scores.parquet')
+    ).to_parquet(f'/content/{out_name}', index=False)
+    print(f'wrote /content/{out_name}')
 """),
 
     md("""## Download artifacts
 """),
     code("""from google.colab import files
-files.download('/content/model_scores.parquet')   # adjust filename per PHASE
-# phase C/D also: files.download('/content/modelC_epoch3.zip') after archiving:
-# !cd /content && zip -rq modelC_epoch3.zip modelC_epoch3/
+NAME = 'modelA_name_address' if PHASE == 'ADDR' else f'model{PHASE}'
+files.download(f'/content/{NAME}_scores.parquet')
+# phase C/D/ADDR checkpoint archive:
+# !cd /content && zip -rq {NAME}_epoch3.zip {NAME}_epoch3/
+# files.download(f'/content/{NAME}_epoch3.zip')
 """),
 
     md("""## Sanity checks (run these in Colab before the long cells)
