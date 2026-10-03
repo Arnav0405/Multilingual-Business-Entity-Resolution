@@ -45,9 +45,10 @@ Goal: reproducible runtime locally (RTX 4060) and on Colab (T4); model download 
 ## Phase 5 — Model B: Pretrained multilingual E5, no fine-tuning (Colab T4)
 
 - [x] `training/notebooks/entity_resolution_colab.ipynb` written: shared header (data upload/mount, score-book helper), then flag-gated phases B / C / D (`training/build_notebook.py` is the generator; nbformat-validated, all cells compile)
-- [ ] Model B run: encode all S1 + candidate names with `intfloat/multilingual-e5-small` (fp16, `query:`/`passage:` prefixes), cosine
-- [ ] Scores exported as `modelB_scores.parquet` → local `baselines/report.py` evaluation (Colab gets no raw data download back from us)
-- [ ] `results/modelB.json` produced: binary at val-tuned threshold + retrieval metrics, Overall / Same / Cross
+- [x] Model B run: encode all S1 + candidate names with `intfloat/multilingual-e5-small` (fp16, `query:`/`passage:` prefixes), cosine
+- [x] Scores exported as `modelB_scores.parquet` → local `baselines/report.py` evaluation (Colab gets no raw data download back from us)
+- [x] `results/modelB.json` produced: binary at val-tuned threshold (0.941) + retrieval metrics, Overall / Same / Cross
+- Phase 5 headline: pretrained E5 with no fine-tuning lifts cross-script recall 2–5% (TF-IDF) → **86.8%**, overall F0.5 0.963 vs 0.929 (best TF-IDF); per-script recall shows Oriya/Tamil near-zero (check n before interpreting), Devanagari/Telugu/Malayalam 0.86–0.91
 
 ## Phase 6 — Model C: Contrastive fine-tuning (Colab T4)
 
