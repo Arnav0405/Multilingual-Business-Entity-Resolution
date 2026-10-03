@@ -92,7 +92,8 @@ def fig1_composition() -> None:
 
 
 def fig2_script_distribution() -> None:
-    """Cross-script positive pairs per Indic script (train+val+test)."""
+    """Cross-script positive pairs per Indic script (train+val+test).
+    Log y-scale: 6 of 9 scripts sit under 200 and vanish on a linear axis."""
     n = {}
     for split in ("train", "val", "test"):
         df = pd.read_csv(DATA / f"{split}_pairs.tsv", sep="\t", usecols=["candidate_name", "label", "pair_type"])
@@ -110,19 +111,22 @@ def fig2_script_distribution() -> None:
     fig, ax = plt.subplots(figsize=(9, 5.2))
     colors = sns.color_palette("Spectral", len(s))
     ax.bar(range(len(s)), s.values, color=colors, edgecolor="black", linewidth=0.8)
+    ax.set_yscale("log")
+    ax.set_ylim(8, 12000)  # headroom above 5,164 for the value labels
     ax.set_xticks(range(len(s)))
-    ax.set_xticklabels([f"{k}\n(n={int(v):,})" for k, v in s.items()], fontsize=10)
+    ax.set_xticklabels([f"{k}" for k in s.keys()], fontsize=10)
     for i, v in enumerate(s.values):
-        ax.text(i, v + 30, f"{int(v):,}", ha="center", fontweight="bold")
-    ax.set_title("Cross-script positive pairs by candidate script — all splits", fontweight="bold")
-    ax.set_ylabel("positive pairs"); ax.grid(axis="y", alpha=0.3)
+        ax.text(i, v * 1.15, f"{int(v):,}", ha="center", fontweight="bold")
+    ax.set_title("Cross-script positive pairs by candidate script — all splits (log scale)", fontweight="bold")
+    ax.set_ylabel("positive pairs (log)"); ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
     fig.savefig(FIGS / "fig2_script_distribution.png", dpi=180, bbox_inches="tight")
     plt.close(fig)
 
 
 def fig3_model_performance(reports) -> None:
-    """Progression: overall F0.5 by model (the central bar chart)."""
+    """Progression: overall F0.5 by model (the central bar chart).
+    Full 0-1 axis: differences are genuinely tiny, don't inflate them."""
     models = [m for m in MODEL_ORDER if m in reports] + ["modelA_name_address"]
     models = list(dict.fromkeys(models))
     f05 = [reports[m]["test"]["overall"]["f0.5"] for m in models if m in reports]
@@ -130,9 +134,11 @@ def fig3_model_performance(reports) -> None:
     fig, ax = plt.subplots(figsize=(10.5, 5.6))
     bars = ax.bar(labels, f05, color=PALETTE, edgecolor="black", linewidth=1.0)
     for b, v in zip(bars, f05):
-        ax.text(b.get_x() + b.get_width() / 2, v + 0.004, f"{v:.4f}", ha="center", fontweight="bold", fontsize=11)
-    ax.set_ylim(0.85, 1.005)
-    ax.set_ylabel("F0.5 (test split)"); ax.set_title("Model progression — overall F0.5", fontweight="bold", pad=14)
+        ax.text(b.get_x() + b.get_width() / 2, v + 0.008, f"{v:.4f}", ha="center", fontweight="bold", fontsize=11)
+    ax.set_ylim(0, 1.0)  # honest baseline: differences are small, say so
+    ax.set_ylabel("F0.5 (test split)")
+    ax.set_title("Model progression — overall F0.5 (all bars near 1.0: improvements are incremental)", fontweight="bold", pad=14, fontsize=12)
+    ax.axhline(1.0, color="gray", linestyle=":", alpha=0.6)
     ax.grid(axis="y", alpha=0.3)
     plt.setp(ax.get_xticklabels(), rotation=18, ha="right")
     fig.tight_layout()
@@ -141,21 +147,24 @@ def fig3_model_performance(reports) -> None:
 
 
 def fig4_same_vs_cross(reports) -> None:
-    """Grouped bars: same-script vs cross-script F0.5, models on the x axis."""
+    """Grouped bars: same-script vs cross-script F0.5, models on the x axis.
+    Legend moved OUT of the axes (it was hiding the headline A′ bars)."""
     models = [m for m in MODEL_ORDER if m in reports]
     same = [reports[m]["test"]["same_script"]["f0.5"] for m in models]
     cross = [reports[m]["test"]["cross_script"]["f0.5"] for m in models]
     labels = [MODEL_LABELS[m] for m in models]
     x = np.arange(len(models))
     w = 0.38
-    fig, ax = plt.subplots(figsize=(11, 5.8))
+    fig, ax = plt.subplots(figsize=(11.5, 5.8))
     ax.bar(x - w / 2, same, w, label="Same-script F0.5", color=PALETTE[0], edgecolor="black")
     ax.bar(x + w / 2, cross, w, label="Cross-script F0.5", color=PALETTE[1], edgecolor="black")
     for xi, (sv, cv) in enumerate(zip(same, cross)):
-        ax.text(xi - w / 2, sv + 0.006, f"{sv:.3f}", ha="center", fontsize=9, fontweight="bold")
-        ax.text(xi + w / 2, cv + 0.006, f"{cv:.3f}", ha="center", fontsize=9, fontweight="bold")
+        ax.text(xi - w / 2, sv + 0.01, f"{sv:.3f}", ha="center", fontsize=9, fontweight="bold")
+        ax.text(xi + w / 2, cv + 0.01, f"{cv:.3f}", ha="center", fontsize=9, fontweight="bold")
     ax.set_xticks(x); ax.set_xticklabels(labels, rotation=14, ha="right", fontsize=10)
-    ax.set_ylim(0, 1.05); ax.set_ylabel("F0.5"); ax.legend(loc="lower right", framealpha=0.95)
+    ax.set_ylim(0, 1.12); ax.set_ylabel("F0.5")
+    # legend below the axes, horizontal — nothing overlaps the data
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2, frameon=True, framealpha=1.0)
     ax.set_title("Same-script vs cross-script F0.5 — the research axis", fontweight="bold", pad=14)
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
@@ -164,7 +173,8 @@ def fig4_same_vs_cross(reports) -> None:
 
 
 def fig5_per_script_heatmap(reports) -> None:
-    """Rows=script, cols=model, values=cross-script recall/F0.5."""
+    """Rows=script, cols=model, values=cross-script recall/F0.5.
+    Colorblind-safe map (crest/viridis family), one SHARED colorbar, Oriya caveat."""
     models = [m for m in MODEL_ORDER if m in reports]
     data_r = pd.DataFrame({MODEL_LABELS[m]: {
         s: reports[m]["test"]["cross_script_by_script"].get(s, {}).get("recall", np.nan) for s in SCRIPT_ORDER
@@ -179,19 +189,67 @@ def fig5_per_script_heatmap(reports) -> None:
                 n_by[s] = e["tp"] + e["fn"]
     ylabels = [f"{s} (n={n_by.get(s, 0)})" for s in data_r.index]
 
-    fig, axes = plt.subplots(1, 2, figsize=(17, 5.8))
-    fig.suptitle("Cross-script performance by candidate script (test split)", fontweight="bold", y=1.02, fontsize=14)
-    for ax, dat, title, cmap in [
-        (axes[0], data_r, "Recall", "RdYlGn"),
-        (axes[1], data_f, "F0.5", "RdYlGn"),
-    ]:
+    fig, axes = plt.subplots(1, 2, figsize=(16.5, 6.5))
+    fig.suptitle("Cross-script performance by candidate script (test split) — colorblind-safe map", fontweight="bold", y=0.98, fontsize=14)
+    cmap = "coolwarm"
+    SHORT = {"TF-IDF char": "char", "TF-IDF word": "word", "TF-IDF both": "both",
+             "E5 pretrained": "E5", "E5 + contrastive": "C", "E5 + hard negs": "D",
+             "E5 + address (A')": "A′"}
+    for ax, dat, title in [(axes[0], data_r, "Recall"), (axes[1], data_f, "F0.5")]:
+        dat = dat.rename(columns=SHORT)
         sns.heatmap(dat, annot=True, fmt=".2f", cmap=cmap, vmin=0, vmax=1,
-                    annot_kws={"fontsize": 10, "fontweight": "bold"},
-                    linewidths=1.4, linecolor="white", cbar_kws={"shrink": 0.85}, ax=ax)
-        ax.set_yticklabels(ylabels, rotation=0, fontsize=10)
+                    annot_kws={"fontsize": 11, "fontweight": "bold"},
+                    linewidths=1.4, linecolor="white", ax=ax)
+        ax.set_yticklabels(ylabels, rotation=0, fontsize=11)
         ax.set_title(title, fontweight="bold")
         ax.set_xlabel("")
-    fig.tight_layout()
+        ax.set_ylabel("")
+        ax.tick_params(axis="x", rotation=45, labelsize=11)
+        for lab in ax.get_xticklabels():
+            lab.set_horizontalalignment("right")
+    # Right-margin VERTICAL colorbar: cannot collide with bottom x-labels.
+    fig.subplots_adjust(bottom=0.26, top=0.86, left=0.11, right=0.86, wspace=0.28)
+    import matplotlib.colors
+    import matplotlib.cm
+    norm = matplotlib.colors.Normalize(vmin=0, vmax=1)
+    sm = matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap)
+    cax = fig.add_axes([0.885, 0.30, 0.018, 0.52])
+    cbar = fig.colorbar(sm, cax=cax, orientation="vertical")
+    cbar.set_ticks([0.0, 0.25, 0.5, 0.75, 1.0])
+    cbar.set_ticklabels(["0", ".25", ".5", ".75", "1"])
+    cbar.ax.tick_params(labelsize=9)
+    cbar.set_label("score", fontsize=9)
+    # caveat in its own bottom strip, well clear of the 45° labels
+    fig.text(0.485, 0.045, "Oriya (n=1) and Gurmukhi (n=5) are anecdotal — per-script claims rest on Devanagari (n=763).",
+             ha="center", fontsize=10, style="italic")
+
+    # --- programmatic collision check: NO text may intersect another's bbox ---
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    boxes = []
+    for ax_ in axes:
+        for lab in ax_.get_xticklabels() + ax_.get_yticklabels():
+            if lab.get_text():
+                boxes.append((f"tick:{lab.get_text()[:18]}", lab.get_window_extent(renderer)))
+    cbar_texts = [cbar.ax.xaxis.label, *cbar.ax.get_yticklabels(), cbar.ax.yaxis.label]
+    for t in cbar_texts:
+        if t.get_text():
+            boxes.append((f"cbar:{t.get_text()[:10]}", t.get_window_extent(renderer)))
+    cav = fig.texts[-1]
+    boxes.append(("caveat", cav.get_window_extent(renderer)))
+    # colorbar BAR bbox vs every text bbox
+    cax_bb = cax.get_window_extent(renderer)
+    collisions = []
+    for name, bb in boxes:
+        if bb.overlaps(cax_bb):
+            collisions.append((name, "colorbar-bar"))
+    for i in range(len(boxes)):
+        for j in range(i + 1, len(boxes)):
+            (n1, b1), (n2, b2) = boxes[i], boxes[j]
+            if b1.overlaps(b2):
+                collisions.append((n1, n2))
+    if collisions:
+        raise SystemExit(f"figure-bbox collision: {collisions}")
     fig.savefig(FIGS / "fig5_per_script_heatmap.png", dpi=180, bbox_inches="tight")
     plt.close(fig)
 
@@ -248,17 +306,29 @@ def fig7_umap_contrastive() -> None:
         return "Latin"
     scripts = df["candidate_name"].map(script_of).values
 
-    fig, axes = plt.subplots(1, 2, figsize=(15.5, 6.4))
+    fig, axes = plt.subplots(1, 2, figsize=(16.5, 6.4), gridspec_kw={"wspace": 0.06})
     fig.suptitle("UMAP of candidate-name embeddings (2,000 val pairs) — pretrained vs contrastively fine-tuned", fontweight="bold", y=1.0)
+    uniq = sorted(set(scripts))
+    cmap = "husl"
+    pal = dict(zip(uniq, sns.color_palette(cmap, len(uniq))))
+    last_z = None
     for ax, emb, title in [(axes[0], emb_b, "E5 pretrained (modelB)"), (axes[1], emb_c, "E5 + contrastive (modelC)")]:
         z = umap.UMAP(n_neighbors=30, min_dist=0.25, metric="cosine", random_state=42).fit_transform(emb)
-        pal = dict(zip(sorted(set(scripts)), sns.color_palette("husl", len(set(scripts)))))
-        for s in sorted(set(scripts)):
+        last_z = z
+        for s in uniq:
             m = scripts == s
-            ax.scatter(z[m, 0], z[m, 1], s=14, alpha=0.7, color=pal[s], label=s if s in ("Latin", "Devanagari") else (s if s != "Latin" else None), edgecolors="none")
+            ax.scatter(z[m, 0], z[m, 1], s=26, alpha=0.75, color=pal[s], edgecolors="none")
         ax.set_title(title, fontweight="bold"); ax.set_xticks([]); ax.set_yticks([])
         ax.grid(False)
-    axes[0].legend(markerscale=2.4, fontsize=9, loc="best", framealpha=0.9)
+        ax.set_xlabel("UMAP-1"); ax.set_ylabel("UMAP-2")
+    # single shared legend OUTSIDE (right of the 2 panels), full script list
+    handles = [plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=pal[s], markersize=9) for s in uniq]
+    leg = fig.legend(handles, uniq, loc="center right", bbox_to_anchor=(1.0, 0.5),
+                     ncol=1, fontsize=9, framealpha=1.0, title="candidate script",
+                     markerscale=1.0, labelspacing=0.7)
+    fig.subplots_adjust(right=0.86)  # leave room for the outside legend
+    fig.text(0.43, -0.03, "UMAP axes are unscaled — only relative cluster structure is meaningful.",
+             ha="center", fontsize=10, style="italic")
     fig.tight_layout()
     fig.savefig(FIGS / "fig7_umap_pretrained_vs_contrastive.png", dpi=180, bbox_inches="tight")
     plt.close(fig)
@@ -290,10 +360,14 @@ def fig8_address_ablation() -> None:
         ax.set_title(metric, fontweight="bold"); ax.set_ylim(0.95, 1.006)
         ax.set_xlabel(""); ax.grid(axis="y", alpha=0.3)
         ax.tick_params(axis="x", rotation=0, labelsize=9)
-        if metric == "F0.5":
-            ax.legend(loc="upper left", fontsize=8)
-        else:
-            ax.get_legend().remove()
+        ax.get_legend().remove()
+    # shared legend UNDER the 3 panels — was overlapping the headline A′ bar
+    handles = [plt.Rectangle((0, 0), 1, 1, facecolor=PALETTE[3], edgecolor="black"),
+               plt.Rectangle((0, 0), 1, 1, facecolor=PALETTE[0], edgecolor="black")]
+    fig.legend(handles, ["Name-only (D)", "Name+address (A′)"], loc="upper center",
+               bbox_to_anchor=(0.5, -0.02), ncol=2, fontsize=10, framealpha=1.0)
+    fig.text(0.5, -0.08, "n_pos=173 for addr_missing (tiny sample) — treat that slice as anecdotal.",
+             ha="center", fontsize=9, style="italic")
     fig.tight_layout()
     fig.savefig(FIGS / "fig8_address_ablation.png", dpi=180, bbox_inches="tight")
     plt.close(fig)
