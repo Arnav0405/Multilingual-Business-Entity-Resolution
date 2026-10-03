@@ -73,15 +73,15 @@ Goal: reproducible runtime locally (RTX 4060) and on Colab (T4); model download 
 ## Phase 8 — Full results table + cross-script/per-script eval
 
 - [x] `baselines/report.py` — merges all `results/*.json` (and `*_scores.parquet` re-runs at a fixed comparison threshold) into the central table with Overall / Same / Cross F0.5 columns
-- [ ] Per-script table (Devanagari/Bengali/Gujarati/Gurmukhi/Kannada/Malayalam/Oriya/Tamil/Telugu): n pairs × {TF-IDF, E5, Contrastive E5}
-- [ ] `test_cross_script.tsv` dedicated eval run for every model
+- [x] Per-script table (Devanagari/Bengali/Gujarati/Gurmukhi/Kannada/Malayalam/Oriya/Tamil/Telugu): n pairs × {TF-IDF, E5, Contrastive E5} — `results/phase8_tables.md` (all 6 models × 9 scripts)
+- [x] `test_cross_script.tsv` dedicated eval run for every model — `results/cross_script_table.json`
 
 ## Phase 9 — Ablations
 
-- [ ] Ablation 1: pretrained E5 vs fine-tuned (B vs C)
-- [ ] Ablation 2: fine-tune vs fine-tune + hard negatives (C vs D)
-- [ ] Ablation 3: same-script vs cross-script slices (already built into evaluate.py — just tabulated)
-- [ ] Written into the table + short prose in the report
+- [x] Ablation 1: pretrained E5 vs fine-tuned (B vs C) — cross-script F0.5 +0.063, recall +0.123
+- [x] Ablation 2: fine-tune vs fine-tune + hard negatives (C vs D) — aggregate tie; Devanagari+Telugu tails cleaned (+6 FN → +1 FP)
+- [x] Ablation 3: same-script vs cross-script slices — gap 0.86 (TF-IDF) → 0.04 (B) → 0.00 (C/D)
+- [x] Written into the table + short prose in the report — `results/phase9_ablations.md`
 
 ## Phase 10 — Address experiment (optional, after name-only works)
 
