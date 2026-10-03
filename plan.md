@@ -96,9 +96,9 @@ Goal: reproducible runtime locally (RTX 4060) and on Colab (T4); model download 
 
 ## Phase 11 — Report
 
-- [ ] Populate `Documentation_template.md` (or an academic copy) with methodology + Phase 8/9 tables + error analysis (sampled FP/FN per slice) + per-script findings
-- [ ] README.MD in `code/business_entity_resolution/` filled (currently empty)
-- [ ] Reproduction notes: how to re-run subset build → validate → baselines → Colab → local eval
+- [x] Full academic report written → `report.md` (33 sections; every metric table filled from `results/central_table.json` + per-model JSONs; qualitative FP/FN analysis with all 21 FPs and representative FNs from the real modelD test scores at the val-tuned threshold; figures §24 wired to the 7 verified artifacts in `results/figures/`; placeholder grep clean except Team/Date header fields)
+- [x] README.MD in `code/business_entity_resolution/` filled (headline table, repo layout, 7-step reproduction pipeline with exact CLI invocations, implementation pitfalls: fp16-NaN, per-anchor hard negatives, `fillna('')` address coercion; CLI flags verified against the scripts)
+- [x] Reproduction notes: covered by README §"Pipeline" — subset build → validate → TF-IDF → Colab (PHASE flag + what to upload/download) → local eval → figures → tests
 
 ---
 ---
