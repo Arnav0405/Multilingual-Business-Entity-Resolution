@@ -1,0 +1,198 @@
+================================================================================
+INITIALISING DUCKDB
+================================================================================
+
+[STEP] staging.gt_pairs
+[SKIP]   gt_pairs already staged
+[OK]   staging.gt_pairs  (0s)
+[SKIP]   s1_col already staged
+
+================================================================================
+BUILDING S1 ENTITY PROFILE
+================================================================================
+Executing entity profiling query...
+
+[STEP] profile
+
+Total S1 entities: 2,206,821
+
+Entity types:
+entity_type
+four_six_matches      894836
+two_three_matches     839979
+cross_script          154981
+zero                  123247
+one_match             113249
+seven_plus_matches     80529
+
+Countries:
+country
+US       1323633
+India     883188
+[OK]   profile  (3s)
+
+================================================================================
+CROSS-SCRIPT DISTRIBUTION
+================================================================================
+entity_type  cross_script  four_six_matches  one_match  seven_plus_matches  two_three_matches   zero
+country                                                                                             
+India              154981            313366      41560               28112             295818  49351
+US                      0            581470      71689               52417             544161  73896
+
+================================================================================
+SELECTING SUBSET
+================================================================================
+India cross-script: 2,000
+India zero-match: 1,500
+India other: 3,000
+US: 3,500
+
+Final selected S1 entities: 10,000
+
+Final country distribution:
+country
+India    6500
+US       3500
+
+Final entity-type distribution:
+entity_type
+cross_script          2531
+four_six_matches      2505
+two_three_matches     2473
+zero                  1917
+one_match              341
+seven_plus_matches     233
+[RESUME] staged seed42_selected adopted as authoritative (19776 ids differ from this run's fresh sample)
+[REBUILD] dropped sel_m (population mismatch)
+[REBUILD] dropped s2_col (population mismatch)
+[REBUILD] dropped s3_col (population mismatch)
+[REBUILD] dropped cand_keys (population mismatch)
+
+================================================================================
+CREATING ENTITY-LEVEL SPLIT
+================================================================================
+Train S1: 6,995
+Validation S1: 1,495
+Test S1: 1,510
+[SKIP]   seed42_train already staged
+[SKIP]   seed42_val already staged
+[SKIP]   seed42_test already staged
+
+[STEP] staging.sel_m / col tables / cand_keys
+[BUILD]  sel_m rows: 29761
+[OK]     staging.sel_m  (0s)
+[BUILD]  s2_col rows: 5034616
+[OK]     staging.s2_col  (2s)
+[BUILD]  s3_col rows: 5285603
+[OK]     staging.s3_col  (2s)
+[BUILD]  cand_keys rows: 10320219
+[OK]     staging.cand_keys  (19s)
+sel_m rows:     29761
+s2_col rows:    5034616
+s3_col rows:    5285603
+cand_keys rows: 10320219
+[OK]   staging.sel_m / col tables / cand_keys  (22s)
+
+================================================================================
+BUILDING POSITIVE PAIRS
+================================================================================
+
+[STEP] positive_pairs
+Positive pairs: 29,761
+[OK]   positive_pairs  (239s)
+
+================================================================================
+BUILDING HARD NEGATIVES
+================================================================================
+
+[STEP] hard_negatives (universe)
+[BUILD]  hard_neg_universe rows: 86211268
+[OK]     staging.hard_neg_universe  (22s)
+[OK]   hard_negatives (universe)  (22s)
+
+[STEP] hard_negatives (pick ids)
+hard_neg_picked rows: 80000
+[OK]   hard_negatives (pick ids)  (0s)
+
+[STEP] hard_negatives (attach names)
+Hard negatives generated: 80,000
+[OK]   hard_negatives (attach names)  (323s)
+
+Generating easy negatives...
+
+[STEP] easy_negatives (pick ids)
+easy_neg_picked rows: 20000
+[OK]   easy_negatives (pick ids)  (0s)
+
+[STEP] easy_negatives (attach names)
+Easy negatives generated: 20,000
+[OK]   easy_negatives (attach names)  (168s)
+
+================================================================================
+FINAL PAIR DATASET
+================================================================================
+Total pairs: 129,761
+
+Labels:
+label
+0    100000
+1     29761
+
+Pair types:
+pair_type
+hard_negative    80000
+positive         29761
+easy_negative    20000
+
+================================================================================
+SAVING CROSS-SCRIPT EXAMPLES
+================================================================================
+Cross-script positive pairs: 6,044
+
+================================================================================
+SANITY CHECKS
+================================================================================
+✓ No S1 entity leakage
+✓ All positive pairs belong to selected entities
+✓ Every pair assigned to exactly one split
+✓ No conflicting pair labels
+
+================================================================================
+DONE
+================================================================================
+
+Output:
+
+C:\Users\Arnav Waghdhare\Desktop\Arnav20\Coding\Python\nlp_ca\data\entity_resolution_subset
+
+S1:
+    train_s1.tsv
+    val_s1.tsv
+    test_s1.tsv
+
+Training data:
+    train_pairs.tsv
+    val_pairs.tsv
+    test_pairs.tsv
+
+Analysis:
+    subset_statistics.json
+    examples/cross_script_pairs.tsv
+
+Final counts:
+
+    S1 entities : 10,000
+    Train       : 6,995
+    Validation  : 1,495
+    Test        : 1,510
+
+    Total pairs : 129,761
+    Positives   : 29,761
+    Negatives   : 100,000
+
+    Cross-script positives:
+        6,044
+
+Runtime: 13.0 min
+
+EXIT:0

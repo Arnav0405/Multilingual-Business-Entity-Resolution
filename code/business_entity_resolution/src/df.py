@@ -19,7 +19,9 @@ Run:  python df.py            (from anywhere; paths resolve via this file)
 
 from __future__ import annotations
 
+import bisect
 import csv
+from collections import Counter
 from pathlib import Path
 
 import pandas as pd
@@ -31,7 +33,7 @@ import pandas as pd
 THIS_FILE = Path(__file__).resolve()
 # src/ -> business_entity_resolution/ -> code/ -> <repo root>
 REPO_ROOT = THIS_FILE.parents[3]
-DATA_DIR = REPO_ROOT / "data" / "student_resource" / "dataset" / "train"
+DATA_DIR = REPO_ROOT / "data"
 
 SOURCE_FILES = {
     "source1": "train_source1.tsv",
@@ -129,6 +131,258 @@ def eda_ground_truth(gt: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Languages / scripts
+# ---------------------------------------------------------------------------
+#
+# Two-level detection, cheapest first:
+#   1. SCRIPT  - the Unicode block the text is written in. Deterministic,
+#                dependency-free, and for this dataset it answers most of the
+#                question: source1 is pure Latin/English, sources 2/3 mix Latin
+#                with nine Indian scripts.
+#   2. LANGUAGE - inside the Latin block (which is >90% of rows) the script
+#                tells you nothing, so we ask langdetect. For non-Latin scripts
+#                the block IS the language signal (Devanagari -> Hindi, ...),
+#                so langdetect is not consulted.
+#
+# langdetect is optional: `uv pip install --python .venv/Scripts/python.exe
+# langdetect`. Without it, Latin rows are reported as "Latin (undetermined)"
+# and the script breakdown still works.
+
+try:  # optional dependency - the rest of this file must run without it
+    from langdetect import DetectorFactory, detect as _langdetect
+    DetectorFactory.seed = 0  # otherwise results differ run to run
+    _HAS_LANGDETECT = True
+except Exception:  # pragma: no cover - depends on the environment
+    _langdetect = None
+    _HAS_LANGDETECT = False
+
+# Non-overlapping Unicode blocks -> script name. Ordered/range-sorted below so
+# a codepoint lookup is a single bisect.
+_SCRIPT_RANGES: tuple[tuple[int, int, str], ...] = tuple(sorted((
+    (0x0041, 0x005A, "Latin"), (0x0061, 0x007A, "Latin"),   # A-Z a-z
+    (0x00C0, 0x024F, "Latin"), (0x1E00, 0x1EFF, "Latin"),   # Latin-1/suppl, ext-B
+    (0x0370, 0x03FF, "Greek"), (0x1F00, 0x1FFF, "Greek"),
+    (0x0400, 0x052F, "Cyrillic"),
+    (0x0530, 0x058F, "Armenian"),
+    (0x0590, 0x05FF, "Hebrew"),
+    (0x0600, 0x06FF, "Arabic"),
+    (0x0700, 0x074F, "Syriac"),
+    (0x0900, 0x097F, "Devanagari"),
+    (0x0980, 0x09FF, "Bengali"),
+    (0x0A00, 0x0A7F, "Gurmukhi"),
+    (0x0A80, 0x0AFF, "Gujarati"),
+    (0x0B00, 0x0B7F, "Oriya"),
+    (0x0B80, 0x0BFF, "Tamil"),
+    (0x0C00, 0x0C7F, "Telugu"),
+    (0x0C80, 0x0CFF, "Kannada"),
+    (0x0D00, 0x0D7F, "Malayalam"),
+    (0x0E00, 0x0E7F, "Thai"),
+    (0x10A0, 0x10FF, "Georgian"), (0x2D00, 0x2D2F, "Georgian"),
+    (0x1100, 0x11FF, "Hangul"), (0x3130, 0x318F, "Hangul"),
+    (0xAC00, 0xD7AF, "Hangul"),
+    (0x30A0, 0x30FF, "Katakana"), (0xFF66, 0xFF9D, "Katakana"),
+    (0x3400, 0x4DBF, "Han"), (0x4E00, 0x9FFF, "Han"), (0xF900, 0xFAFF, "Han"),
+)))
+_SCRIPT_STARTS = [r[0] for r in _SCRIPT_RANGES]
+
+# Script -> the language that block is written in. Cyrillic/Han are reported as
+# their dominant language; this dataset is US/India so those blocks are ~noise.
+_SCRIPT_LANGUAGE = {
+    "Devanagari": "Hindi", "Bengali": "Bengali", "Gurmukhi": "Punjabi",
+    "Gujarati": "Gujarati", "Oriya": "Odia", "Tamil": "Tamil",
+    "Telugu": "Telugu", "Kannada": "Kannada", "Malayalam": "Malayalam",
+    "Thai": "Thai", "Greek": "Greek", "Hebrew": "Hebrew", "Arabic": "Arabic",
+    "Syriac": "Syriac", "Armenian": "Armenian", "Georgian": "Georgian",
+    "Cyrillic": "Russian", "Han": "Chinese", "Hangul": "Korean",
+    "Katakana": "Japanese",
+}
+
+# ISO-639-1 -> readable name, for the langdetect half of the report.
+_LANG_NAMES = {
+    "en": "English", "fr": "French", "de": "German", "es": "Spanish",
+    "it": "Italian", "pt": "Portuguese", "nl": "Dutch", "ro": "Romanian",
+    "ru": "Russian", "uk": "Ukrainian", "pl": "Polish", "tr": "Turkish",
+    "vi": "Vietnamese", "id": "Indonesian", "sv": "Swedish", "da": "Danish",
+    "no": "Norwegian", "fi": "Finnish", "cs": "Czech", "hu": "Hungarian",
+    "el": "Greek", "he": "Hebrew", "ar": "Arabic", "fa": "Persian",
+    "hi": "Hindi", "bn": "Bengali", "ta": "Tamil", "te": "Telugu",
+    "kn": "Kannada", "gu": "Gujarati", "mr": "Marathi", "pa": "Punjabi",
+    "ml": "Malayalam", "or": "Odia", "ne": "Nepali", "si": "Sinhala",
+    "th": "Thai", "ja": "Japanese", "ko": "Korean", "zh": "Chinese",
+    "af": "Afrikaans", "ca": "Catalan", "hr": "Croatian", "sl": "Slovenian",
+    "bg": "Bulgarian", "lt": "Lithuanian", "lv": "Latvian", "et": "Estonian",
+    "sq": "Albanian", "is": "Icelandic", "cy": "Welsh", "eu": "Basque",
+    "gl": "Galician", "sk": "Slovak", "sr": "Serbian", "ms": "Malay",
+    "la": "Latin", "eo": "Esperanto", "tl": "Tagalog", "sw": "Swahili",
+}
+
+
+def _script_of_char(ch: str) -> str | None:
+    """Unicode script (block name) of one character, or None if it carries no
+    script signal (digits, punctuation, whitespace, ASCII symbols)."""
+    cp = ord(ch)
+    if 0x41 <= cp <= 0x5A or 0x61 <= cp <= 0x7A:  # fast path: A-Z a-z
+        return "Latin"
+    i = bisect.bisect_right(_SCRIPT_STARTS, cp) - 1
+    if i >= 0:
+        lo, hi, name = _SCRIPT_RANGES[i]
+        if lo <= cp <= hi:
+            return name
+    return None
+
+
+def detect_script(text: str) -> str:
+    """Dominant script of `text` - the block owning the most letters.
+
+    A mixed string (e.g. an English name with a Devanagari street) is reported
+    as its majority script, with ties broken alphabetically so the result is
+    deterministic. Returns "Empty" for blank cells and "Undetermined" when the
+    text has letters in no known block.
+    """
+    if not text or not text.strip():
+        return "Empty"
+    counts: dict[str, int] = {}
+    for ch in text:
+        name = _script_of_char(ch)
+        if name is not None:
+            counts[name] = counts.get(name, 0) + 1
+    if not counts:
+        return "Undetermined"
+    return min(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0]
+
+
+def detect_language(text: str, script: str | None = None) -> str:
+    """Language of `text`.
+
+    Non-Latin scripts name their own language. Latin script - which is where
+    every transliteration and every US business name lives - needs a real
+    detector, so langdetect decides; without langdetect the answer degrades to
+    "Latin (undetermined)" rather than guessing.
+    """
+    script = script or detect_script(text)
+    if script != "Latin":
+        return _SCRIPT_LANGUAGE.get(script, script)
+    if not _HAS_LANGDETECT:
+        return "Latin (undetermined)"
+    text = text.strip()
+    if not text:
+        return "Empty"
+    try:
+        assert _langdetect is not None  # narrowed by _HAS_LANGDETECT
+        code = _langdetect(text)
+    except Exception:  # LangDetectException on empty/featureless input
+        return "undetermined"
+    return _LANG_NAMES.get(code, code)
+
+
+def collect_languages(directory: Path | str | None = None, *,
+                      stride: int = 25, chunk_size: int = 200_000,
+                      max_chunks: int | None = None,
+                      lang_sample: int = 2_000) -> dict:
+    """Stream the three train sources and tally script / language per column.
+
+    The files are ~1.3 GB and ~12.5M rows, so this reads them in chunks and
+    takes every `stride`-th row of each chunk - the counts below are a
+    SAMPLE, not exact totals, and every printed total says so. Pass stride=1
+    (and expect minutes) for a full pass.
+    """
+    per_source: dict[str, dict] = {}
+    for key, fname in SOURCE_FILES.items():
+        path = Path(directory) / fname if directory else DATA_DIR / fname
+        scripts = {"business_name": Counter(), "business_address": Counter()}
+        langs = {"business_name": Counter(), "business_address": Counter()}
+        by_country: Counter = Counter()
+        scanned = 0
+        for n, chunk in enumerate(pd.read_csv(
+                path, sep="\t", dtype=str, keep_default_na=False, na_filter=False,
+                quoting=csv.QUOTE_NONE, engine="c",
+                usecols=["business_name", "business_address", "country"],
+                chunksize=chunk_size)):
+            if max_chunks is not None and n >= max_chunks:
+                break
+            sample = chunk.iloc[::stride]
+            scanned += len(sample)
+            # script is cheap: run it on the whole strided sample
+            for col in ("business_name", "business_address"):
+                for text, script in zip(sample[col], map(detect_script, sample[col])):
+                    scripts[col][script] += 1
+            # language detection is the expensive half: cap it per source/column
+            for col in ("business_name", "business_address"):
+                head = sample[col].head(lang_sample)
+                langs[col].update(map(detect_language, head))
+            by_country.update(zip(sample["country"],
+                                  map(detect_language, sample["business_name"])))
+        per_source[key] = {"file": fname, "sampled_rows": scanned,
+                           "scripts": scripts, "languages": langs,
+                           "country_languages": by_country}
+    return per_source
+
+
+def eda_languages(directory: Path | str | None = None, *,
+                  stride: int = 25, chunk_size: int = 200_000,
+                  max_chunks: int | None = None,
+                  lang_sample: int = 2_000) -> None:
+    """Print every language found in the three train source files.
+
+    Per source: the script breakdown for name and address, the languages
+    langdetect assigns (Latin rows only get a real verdict), the languages per
+    country, and a final all-sources summary of the distinct languages.
+
+    CAVEAT on the language list: a business name is 2-4 tokens, and langdetect
+    needs a paragraph to be statistically sound, so the Latin rows over-fire -
+    "Estonian"/"Catalan"/"so" on US business names is detector noise, not
+    real language. The SCRIPT breakdown is the trustworthy half; the language
+    list is trustworthy for the non-Latin rows (Hindi, Tamil, ...) and only
+    indicative for Latin ones.
+    """
+    print(f"Data dir: {DATA_DIR if directory is None else Path(directory)}")
+    print(f"langdetect installed: {_HAS_LANGDETECT}"
+          f"   (script detection always runs; stride={stride}, "
+          f"lang_sample={lang_sample:,} per source/column)")
+
+    data = collect_languages(directory, stride=stride, chunk_size=chunk_size,
+                             max_chunks=max_chunks, lang_sample=lang_sample)
+
+    for key in ("source1", "source2", "source3"):
+        info = data[key]
+        n = max(info["sampled_rows"], 1)
+        print(f"\n--- {key} ({info['file']}) ---")
+        print(f"sampled {info['sampled_rows']:,} rows (1 in {stride})")
+
+        for col in ("business_name", "business_address"):
+            counts = info["scripts"][col]
+            if not counts:
+                continue
+            print(f"  script of {col}:")
+            for script, c in counts.most_common():
+                print(f"    {script:<12} {c:>9,}  {c / n:6.2%}")
+            top = ", ".join(f"{lang} {c:,}"
+                            for lang, c in info["languages"][col].most_common(5))
+            print(f"  languages of {col} (top 5): {top or 'n/a'}")
+
+        countries: dict[str, int] = {}
+        for (country, lang), c in info["country_languages"].items():
+            countries[country] = countries.get(country, 0) + c
+        for country, c in sorted(countries.items(), key=lambda kv: -kv[1]):
+            names = ", ".join(f"{lang} {cnt:,}" for (co, lang), cnt
+                              in info["country_languages"].most_common()
+                              if co == country)
+            print(f"  country {country!r:<8} ({c:,} names): {names}")
+
+    # cross-source summary: the distinct languages in the train files
+    totals: Counter = Counter()
+    for info in data.values():
+        for col in ("business_name", "business_address"):
+            totals.update(info["languages"][col])
+    print(f"\n--- all sources: {len(totals)} distinct languages ---")
+    for lang, c in totals.most_common():
+        print(f"  {lang:<24} {c:>9,}")
+    if not _HAS_LANGDETECT:
+        print("  (Latin-script rows are unattributed - `pip install langdetect` "
+              "to resolve them into English/French/...)")
+
+
+# ---------------------------------------------------------------------------
 
 def main() -> None:
     print(f"Data dir: {DATA_DIR}")
@@ -137,6 +391,7 @@ def main() -> None:
     for key in ("source1", "source2", "source3"):
         eda_source(data[key], key)
     eda_ground_truth(data["ground_truth"])
+    eda_languages()
 
     print("\nWhat the task is: given the three source listings, predict which")
     print("records refer to the same business (train ground truth shows the")
