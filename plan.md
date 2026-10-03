@@ -14,11 +14,11 @@ textual forms?
 
 Goal: reproducible runtime locally (RTX 4060) and on Colab (T4); model download verified.
 
-- [x] Existing venv (`code/business_entity_resolution/.venv`, Python 3.13) has torch 2.9.0+cu130, duckdb, pandas, numpy, tqdm, pyarrow (`python -c "import torch; print(torch.__version__, torch.cuda.is_available())"` → `2.9.0+cu130 True`)
-- [x] Add missing deps: scikit-learn 1.9.1, scipy 1.18.1 (via `uv pip install --python code/business_entity_resolution/.venv/Scripts/python.exe`)
-- [ ] `transformers` + `sentencepiece` installed in the venv (needed to build the score book from exported embeddings without re-encoding)
-- [ ] `intfloat/multilingual-e5-small` downloaded + smoke test: encode 2 strings locally, cosine sanity (Latin≈Latin high, Latin vs Devanagari computed and recorded in `results/env_smoke.json`)
+- [x] Existing venv (`code/business_entity_resolution/.venv`, Python 3.13) has torch 2.14.1+cu130, duckdb, pandas, numpy, tqdm, pyarrow (`python -c "import torch; print(torch.__version__, torch.cuda.is_available())"` → `2.14.1+cu130 True`)
+- [x] Add missing deps: scikit-learn 1.9.1, scipy 1.18.1, transformers 5.18.0, sentencepiece, nbformat, pytest (via `uv pip install --python code/business_entity_resolution/.venv/Scripts/python.exe`)
+- [x] `intfloat/multilingual-e5-small` downloaded + smoke test (`scripts/env_smoke.py` → `results/env_smoke.json`): 117.7M params, CLS+prefix scheme; pretrained cosines — cross-script 0.945/0.965 but hard negative 0.974 (pretrained encoder cannot discriminate — this is what fine-tuning must fix)
 - [x] Colab T4 noted as the training/compute target for Models B/C/D notebooks
+- [x] Phases 0–5 committed to git per phase
 
 ## Phase 1 — Dataset
 
@@ -44,7 +44,7 @@ Goal: reproducible runtime locally (RTX 4060) and on Colab (T4); model download 
 
 ## Phase 5 — Model B: Pretrained multilingual E5, no fine-tuning (Colab T4)
 
-- [ ] `training/notebooks/entity_resolution_colab.ipynb` written: shared header (data upload/mount, score-book helper), then flag-gated phases B / C / D
+- [x] `training/notebooks/entity_resolution_colab.ipynb` written: shared header (data upload/mount, score-book helper), then flag-gated phases B / C / D (`training/build_notebook.py` is the generator; nbformat-validated, all cells compile)
 - [ ] Model B run: encode all S1 + candidate names with `intfloat/multilingual-e5-small` (fp16, `query:`/`passage:` prefixes), cosine
 - [ ] Scores exported as `modelB_scores.parquet` → local `baselines/report.py` evaluation (Colab gets no raw data download back from us)
 - [ ] `results/modelB.json` produced: binary at val-tuned threshold + retrieval metrics, Overall / Same / Cross
