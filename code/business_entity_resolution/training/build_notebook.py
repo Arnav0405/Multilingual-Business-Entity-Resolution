@@ -122,9 +122,12 @@ def is_cross_script(a, b):
     return script_tags(a) != script_tags(b)
 
 def apply_variant(df, side, variant):
+    # NaN (empty optional address fields) must never survive: coerce to ''
+    def clean(col):
+        return df[col].fillna('').astype(str)
     if variant == 'name':
-        return df[side + '_name']
-    return 'Business name: ' + df[side + '_name'] + ' | Address: ' + df[side + '_address']
+        return clean(side + '_name')
+    return 'Business name: ' + clean(side + '_name') + ' | Address: ' + clean(side + '_address')
 
 @torch.no_grad()
 def encode(texts, prefix='passage: ', batch_size=256):
@@ -191,12 +194,12 @@ class GroupPairs(Dataset):
             neg = g[g['label'] == 0]
             hard = neg[neg['pair_type'] == 'hard_negative'].head(max_hard)
             self.groups.append({
-                'anchor': str(pos['s1_name'].iloc[0]),
-                'anchor_address': str(pos['s1_address'].iloc[0]) if 's1_address' in pos.columns else '',
-                'positives': [str(x) for x in pos['candidate_name'].tolist()],
-                'positives_address': [str(x) for x in (pos['candidate_address'].tolist() if 'candidate_address' in pos.columns else [])],
-                'hards': [str(x) for x in hard['candidate_name'].tolist()],
-                'hards_address': [str(x) for x in (hard['candidate_address'].tolist() if 'candidate_address' in hard.columns else [])],
+                'anchor': str(pos['s1_name'].iloc[0]) if pd.notna(pos['s1_name'].iloc[0]) else '',
+                'anchor_address': str(pos['s1_address'].iloc[0]) if ('s1_address' in pos.columns and pd.notna(pos['s1_address'].iloc[0])) else '',
+                'positives': [str(x) if pd.notna(x) else '' for x in pos['candidate_name'].tolist()],
+                'positives_address': [str(x) if pd.notna(x) else '' for x in (pos['candidate_address'].tolist() if 'candidate_address' in pos.columns else [])],
+                'hards': [str(x) if pd.notna(x) else '' for x in hard['candidate_name'].tolist()],
+                'hards_address': [str(x) if pd.notna(x) else '' for x in (hard['candidate_address'].tolist() if 'candidate_address' in hard.columns else [])],
             })
     def __len__(self):
         return len(self.groups)
@@ -205,15 +208,20 @@ class GroupPairs(Dataset):
 
 def _variant(item, kind, j, variant):
     '''kind: anchor|pos|hard; j: which candidate within the kind.
-    name variant: plain candidate_name; name_address: raw concat string.'''
+    name variant: plain candidate_name; name_address: raw concat string.
+    Empty (NaN) addresses are coerced to '' before concatenation.'''
     if variant == 'name':
         return str(item['anchor'] if kind == 'anchor' else (
             item['positives'][j] if kind == 'pos' else item['hards'][j]))
+    addr = ''
     if kind == 'anchor':
-        return 'Business name: ' + item['anchor'] + ' | Address: ' + str(item.get('anchor_address', ''))
+        addr = str(item.get('anchor_address', '') or '')
+        return 'Business name: ' + str(item['anchor']) + ' | Address: ' + addr
     if kind == 'pos':
-        return 'Business name: ' + item['positives'][j] + ' | Address: ' + str(item['positives_address'][j])
-    return 'Business name: ' + item['hards'][j] + ' | Address: ' + str(item['hards_address'][j])
+        addr = str(item['positives_address'][j] or '') if j < len(item['positives_address']) else ''
+        return 'Business name: ' + str(item['positives'][j]) + ' | Address: ' + addr
+    addr = str(item['hards_address'][j] or '') if j < len(item['hards_address']) else ''
+    return 'Business name: ' + str(item['hards'][j]) + ' | Address: ' + addr
 
 def collate(batch, tokenizer, max_length=MAX_LENGTH, max_pos=2, max_extra_neg=4, variant=TEXT_VARIANT):
     '''Flattens each group into its top `max_pos` positives (anchor repeated

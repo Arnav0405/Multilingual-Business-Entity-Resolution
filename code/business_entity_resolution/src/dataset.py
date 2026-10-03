@@ -22,12 +22,13 @@ SUBSET = REPO_ROOT / "data" / "entity_resolution_subset"
 
 
 def apply_text_variant(df: pd.DataFrame, side_cols: tuple[str, str], variant: str) -> pd.Series:
-    """ Return the raw text for each row given the variant. """
+    """ Return the raw text for each row given the variant. NaN coerced to ''. """
     a, b = side_cols
+    clean = lambda c: df[c].fillna('').astype(str)
     if variant == "name":
-        return df[a]
+        return clean(a)
     if variant == "name_address":
-        return "Business name: " + df[a] + " | Address: " + df[b]
+        return "Business name: " + clean(a) + " | Address: " + clean(b)
     raise ValueError(f"unknown variant {variant}")
 
 
