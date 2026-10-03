@@ -64,12 +64,15 @@ Goal: reproducible runtime locally (RTX 4060) and on Colab (T4); model download 
 
 ## Phase 7 — Model D: Contrastive + hard negatives (Colab T4)
 
-- [ ] Same trainer, `--hard-negatives` flag: anchors batched with stored hard negatives alongside in-batch
-- [ ] Train → download → local eval → `results/modelD.json`
+- [x] Same trainer, `--hard-negatives` flag: anchors batched with stored hard negatives alongside in-batch
+- [x] Train → download → local eval → `results/modelD.json`
+- First attempt crashed in collate (`view()` on ragged batch): hard negatives were collected per GROUP but anchors flattened per POSITIVE ROW — A=124 didn't divide h. Fixed: per-anchor-row alignment, exactly K=4 per row, batch-pool fill with replacement when needed. Committed 3c9b0b2.
+
+**Phase 7 headline (hard negatives effect, Ablation 2)**: overall F0.5 0.9895 (vs C 0.9896 — tie), cross-script 0.9946 both. Gains are surgical, not global: Devanagari 0.997 → 1.0 (763 pairs), Tamil/Malayalam unchanged, overall +1 FN trade for +5 FP on cross-script (~equal F0.5), val-tuned threshold barely moved (0.7021 → 0.7011). Interpretation: with in-batch MNRL at batch 64, random same-batch entities already supply most discrimination pressure; stored hard negatives polish the residual (Devanagari tail) without shifting the operating point. Ablation 2's honest answer on this subset: hard negatives ≈ no significant difference, marginal per-script regularization.
 
 ## Phase 8 — Full results table + cross-script/per-script eval
 
-- [ ] `baselines/report.py` — merges all `results/*.json` (and `*_scores.parquet` re-runs at a fixed comparison threshold) into the central table with Overall / Same / Cross F0.5 columns
+- [x] `baselines/report.py` — merges all `results/*.json` (and `*_scores.parquet` re-runs at a fixed comparison threshold) into the central table with Overall / Same / Cross F0.5 columns
 - [ ] Per-script table (Devanagari/Bengali/Gujarati/Gurmukhi/Kannada/Malayalam/Oriya/Tamil/Telugu): n pairs × {TF-IDF, E5, Contrastive E5}
 - [ ] `test_cross_script.tsv` dedicated eval run for every model
 
