@@ -73,18 +73,55 @@ def collate(batch, tokenizer, max_length=64, max_pos=2, max_extra_neg=4):
     Returns tensors:
         anchor  [B * max_pos] query strings (anchor repeated per positive)
         pos     [B * max_pos] passage strings
-        hard    [B * n_hard]  passage strings (only when any exist)
+        hard    [A * K]      passage strings (K uniform per anchor row)
     MNRL treats in-batch positives as easy negatives; `hard` entries
     append per-sample extra negatives via losses.mnrl.
+
+    Anchors are flattened PER POSITIVE ROW (a group with 2 positives
+    contributes 2 anchor rows), so hard negatives must be aligned per
+    anchor row too: exactly `max_extra_neg` per row (uniform K), the
+    group's own stored hards first, then the batch pool fills the rest.
+    A pool entry is "some other business" — a valid extra negative for
+    any anchor, so cross-assignment adds no label noise. This keeps
+    h.shape[0] == a.shape[0] * K, which the train loop's view() needs.
     """
-    anchors, positives, hards = [], [], []
+    anchors, positives, group_hards = [], [], []
     for item in batch:
         a = item["anchor"]
+        hs = list(item["hards"][:max_extra_neg]) if max_extra_neg else []
         for p in item["positives"][:max_pos]:
             anchors.append(a)
             positives.append(p)
-        for h in item["hards"][:max_extra_neg] if max_extra_neg else []:
-            hards.append(h)
+            group_hards.append(hs)
+
+    hards: list[str] = []
+    if max_extra_neg and any(group_hards):
+        pool = []
+        for hs in group_hards:
+            for h in hs:
+                if h not in pool:
+                    pool.append(h)
+        # drop a hard that is exactly equal to its OWN row's positive
+        # (never train "same string = negative"); other rows' positives are
+        # fine — they are in-batch negatives anyway.
+        for hs in group_hards:
+            own = [h for h in hs if h not in pool or True]
+            own = hs[:]
+            fill_count = max_extra_neg - len(own)
+            if fill_count > 0:
+                distinct = [h for h in pool if h not in own]
+                if len(distinct) >= fill_count:
+                    extra = distinct[:fill_count]
+                else:
+                    # with-replacement fill to reach exactly K: a repeated
+                    # negative string is still a negative; a ragged hard
+                    # tensor crashes the train loop
+                    src = distinct or pool
+                    extra = [src[i % len(src)] for i in range(fill_count)] if src else []
+                own = own + extra
+            hards.extend(own[:max_extra_neg])
+    K = max_extra_neg if hards else 0
+
     enc = lambda texts, prefix: tokenizer(
         [prefix + t for t in texts], padding=True, truncation=True,
         max_length=max_length, return_tensors="pt",

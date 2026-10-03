@@ -192,15 +192,40 @@ class GroupPairs(Dataset):
         return self.groups[i]
 
 def collate(batch, tokenizer, max_length=MAX_LENGTH, max_pos=2, max_extra_neg=4):
-    '''Flattens each group into its top `max_pos` positives (anchor repeated);
-    `max_extra_neg` hard negatives per group. `max_extra_neg=0` for phase C.'''
-    anchors, positives, hards = [], [], []
+    '''Flattens each group into its top `max_pos` positives (anchor repeated
+    per positive row); hard negatives are aligned PER ANCHOR ROW — exactly
+    `max_extra_neg` per row (uniform K), the group's own stored hards first
+    and the batch pool filling the rest (a pool entry is a valid negative
+    for any anchor). Keeps h.shape[0] == a.shape[0] * K, which the train
+    loop's view() reshape needs. `max_extra_neg=0` for phase C.'''
+    anchors, positives, group_hards = [], [], []
     for item in batch:
         a = item['anchor']
+        hs = list(item['hards'][:max_extra_neg]) if max_extra_neg else []
         for p in item['positives'][:max_pos]:
-            anchors.append(a); positives.append(p)
-        for h in (item['hards'][:max_extra_neg] if max_extra_neg else []):
-            hards.append(h)
+            anchors.append(a); positives.append(p); group_hards.append(hs)
+    hards = []
+    if max_extra_neg and any(group_hards):
+        pool = []
+        for hs in group_hards:
+            for h in hs:
+                if h not in pool:
+                    pool.append(h)
+        for hs in group_hards:
+            own = hs[:]
+            fill_count = max_extra_neg - len(own)
+            if fill_count > 0:
+                distinct = [h for h in pool if h not in own]
+                if len(distinct) >= fill_count:
+                    extra = distinct[:fill_count]
+                else:
+                    # with-replacement fill to reach exactly K: a repeated
+                    # negative string is still a negative; a ragged hard
+                    # tensor crashes the train loop
+                    src = distinct or pool
+                    extra = [src[i % len(src)] for i in range(fill_count)] if src else []
+                own = own + extra
+            hards.extend(own[:max_extra_neg])
     enc = lambda texts, prefix: tokenizer(
         [prefix + t for t in texts], padding=True, truncation=True,
         max_length=max_length, return_tensors='pt')

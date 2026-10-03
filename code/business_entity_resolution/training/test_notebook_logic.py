@@ -127,13 +127,66 @@ def test_collate_shapes_match():
         {"anchor": "Alpha International Pvt Ltd", "positives": ["ఆల్ఫా ఇంటర్నేషనల్ ప్రైవేట్ లిమిటెడ్"], "hards": []},
     ]
     out = collate(batch, tok, max_pos=2, max_extra_neg=4)
-    # anchors: 2 + 1 positives = 3 anchor rows, 3 positive rows, 2 hard rows
+    # anchors: 2 + 1 positives = 3 anchor rows, 3 positive rows; each anchor
+    # row gets exactly K=4 pool-filled hards -> 12 hard rows
     assert out["anchor"]["input_ids"].shape[0] == 3
     assert out["positive"]["input_ids"].shape[0] == 3
-    assert out["hard"]["input_ids"].shape[0] == 2
+    assert out["hard"]["input_ids"].shape[0] == 12
     assert out["anchor"]["input_ids"].shape[1] <= 64
     # prefix scheme actually visible to the tokenizer (XLM-R adds <s>...</s>)
     assert "query:" in tok.decode(out["anchor"]["input_ids"][0])
+
+
+def test_collate_hard_count_divides_anchor_count_phase_D():
+    """The phase-D Colab crash: h.shape[0] must equal a.shape[0] * K exactly,
+    for arbitrary ragged combos of positives/hards per group."""
+    import torch
+    from transformers import AutoTokenizer
+    from train_contrastive import collate
+    tok = AutoTokenizer.from_pretrained("intfloat/multilingual-e5-small")
+    batch = [
+        # 3 positives, 4 hards -> with max_pos=2 flattens to 2 anchor rows
+        {"anchor": "A1", "positives": ["p1", "p2", "p3"], "hards": ["h1a", "h1b", "h1c", "h1d"]},
+        # 1 positive, 1 hard -> 1 anchor row
+        {"anchor": "A2", "positives": ["q1"], "hards": ["h2a"]},
+        # 2 positives, 0 hards -> 2 anchor rows, pool-filled
+        {"anchor": "A3", "positives": ["r1", "r2"], "hards": []},
+        # 1 positive, 2 hards -> 1 anchor row
+        {"anchor": "A4", "positives": ["s1"], "hards": ["h4a", "h4b"]},
+    ]
+    out = collate(batch, tok, max_pos=2, max_extra_neg=4)
+    A = out["anchor"]["input_ids"].shape[0]          # 2 + 1 + 2 + 1 = 6
+    H = out["hard"]["input_ids"].shape[0]
+    assert A == 6, A
+    assert H % A == 0, f"hard count {H} not divisible by anchor count {A}"
+    K = H // A
+    assert K == 4, K  # max_extra_neg hards per anchor row, pool-filled
+    # and the train loop's exact reshape must succeed:
+    a = torch.randn(A, 8)
+    extra = torch.randn(H, 8).view(A, K, -1)
+    assert extra.shape == (A, K, 8)
+    pos_list = tok.batch_decode(out["positive"]["input_ids"])
+    for p in pos_list:
+        assert "passage:" in p
+
+
+def test_collate_pool_fill_semantics():
+    """Pool fill: rows whose group has no hards still get exactly K negatives;
+    a pool entry is a valid negative for any anchor."""
+    from transformers import AutoTokenizer
+    from train_contrastive import collate
+    tok = AutoTokenizer.from_pretrained("intfloat/multilingual-e5-small")
+    batch = [
+        {"anchor": "A1", "positives": ["p1"], "hards": ["h1", "h2"]},
+        {"anchor": "A2", "positives": ["q1"], "hards": []},
+    ]
+    out = collate(batch, tok, max_pos=1, max_extra_neg=2)
+    assert out["anchor"]["input_ids"].shape[0] == 2
+    assert out["hard"]["input_ids"].shape[0] == 4  # 2 rows x K=2
+    # row 1 (anchor A2) got pool-filled from A1's hards -> no empty entries
+    # (all strings tokenized to > 2 real tokens)
+    lens = out["hard"]["attention_mask"].sum(dim=1).tolist()
+    assert all(l > 3 for l in lens), lens
 
 
 def test_collate_no_hard_negatives_phase_C():
@@ -152,9 +205,7 @@ def test_mnrl_decreases_with_better_alignment():
     torch.manual_seed(0)
     B, D = 8, 16
     a = torch.nn.functional.normalize(torch.randn(B, D), dim=-1)
-    # identical positives: loss should be minimal-ish but > 0 because of in-batch masking
     loss_same = mnrl(a, a.clone())
-    # shuffled positives: loss should be strictly higher
     perm = torch.randperm(B)
     loss_shuffled = mnrl(a, a[perm])
     assert loss_shuffled > loss_same
@@ -162,20 +213,18 @@ def test_mnrl_decreases_with_better_alignment():
 
 def test_mnrl_with_explicit_negatives_changes_loss():
     import torch
-    from losses import mnrl as mnrl_fn
     torch.manual_seed(0)
     B, D, K = 8, 16, 2
     a = torch.nn.functional.normalize(torch.randn(B, D), dim=-1)
     p = torch.nn.functional.normalize(torch.randn(B, D), dim=-1)
     neg = torch.nn.functional.normalize(torch.randn(B, K, D), dim=-1)
-    loss_no = mnrl_fn(a, p, extra_neg_emb=None)
-    loss_neg = mnrl_fn(a, p, extra_neg_emb=neg)
+    loss_no = mnrl(a, p, extra_neg_emb=None)
+    loss_neg = mnrl(a, p, extra_neg_emb=neg)
     assert loss_neg > loss_no
 
 
 def test_mnrl_gradient_flows_through_extra_negatives():
     import torch
-    from losses import mnrl as mnrl_fn
     torch.manual_seed(0)
     a_leaf = torch.randn(4, 8, requires_grad=True)
     p_leaf = torch.randn(4, 8, requires_grad=True)
@@ -183,7 +232,7 @@ def test_mnrl_gradient_flows_through_extra_negatives():
     a = torch.nn.functional.normalize(a_leaf, dim=-1)
     p = torch.nn.functional.normalize(p_leaf, dim=-1)
     neg = torch.nn.functional.normalize(neg_leaf, dim=-1)
-    loss = mnrl_fn(a, p, extra_neg_emb=neg)
+    loss = mnrl(a, p, extra_neg_emb=neg)
     loss.backward()
     for t in (a_leaf, p_leaf, neg_leaf):
         assert t.grad is not None and t.grad.abs().sum() > 0
