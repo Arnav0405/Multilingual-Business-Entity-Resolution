@@ -7,3 +7,8 @@ __pycache__/
 .venv/
 results/*.parquet
 results/*.parquet
+
+# Large model checkpoints - excluded from pushes (NOT deleted locally)
+**/results/*_epoch3/
+**/results/**/model.safetensors
+attmpt1_broken_modelC_epoch3/

@@ -1,0 +1,2 @@
+# Large model checkpoints excluded from git (NOT deleted on disk)
+attmpt1_broken_modelC_epoch3/
