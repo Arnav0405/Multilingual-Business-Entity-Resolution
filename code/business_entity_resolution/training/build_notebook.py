@@ -289,9 +289,14 @@ files.download('/content/model_scores.parquet')   # adjust filename per PHASE
 
     md("""## Sanity checks (run these in Colab before the long cells)
 """),
-    code("""assert len(load_pairs('val')) == len(load_pairs('test')) == len(pd.read_csv(DATA / 'test_pairs.tsv', sep='\\t'))
+    code("""rows = {s: len(load_pairs(s)) for s in ('train', 'val', 'test')}
+raw  = {s: len(pd.read_csv(DATA / f'{s}_pairs.tsv', sep='\\t')) for s in ('train', 'val', 'test')}
+assert rows == raw, f'score-book row counts must equal the TSVs on disk: {rows} vs {raw}'
 assert set(load_pairs('train')['label'].unique()) == {0, 1}
-print('data shape ok; PHASE =', PHASE, '; TEXT_VARIANT =', TEXT_VARIANT)
+assert len(load_pairs('train')['s1_id'].unique()) == 6995, 'train should have 6995 S1 entities'
+assert len(load_pairs('val')['s1_id'].unique()) == 1495, 'val should have 1495 S1 entities'
+assert len(load_pairs('test')['s1_id'].unique()) == 1510, 'test should have 1510 S1 entities'
+print('data shape ok:', rows, '; PHASE =', PHASE, '; TEXT_VARIANT =', TEXT_VARIANT)
 """),
 
     md("""## End
