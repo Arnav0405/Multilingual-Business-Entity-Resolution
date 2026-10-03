@@ -55,10 +55,12 @@ Goal: reproducible runtime locally (RTX 4060) and on Colab (T4); model download 
 - [x] `src/dataset.py` — anchor/positive/negative triples straight from subset TSVs, no normalization
 - [x] `losses.py` — MultipleNegativesRankingLoss (in-batch + explicit negatives mix)
 - [x] `training/train_contrastive.py` — `sentence-transformers`, batch size capped for T4 15 GB, checkpointing after each epoch
-- [ ] Train run (Model C: positives + in-batch negatives only) → `modelC/model.safetensors` downloaded locally
-- [ ] Local eval on RTX 4060 → `results/modelC.json` (same report shape as Model B)
+- [x] Train run (Model C: positives + in-batch negatives only) → `modelC/model.safetensors` downloaded locally (attempt 2, post-divergence-fix, 0 NaN)
+- [x] Local eval on RTX 4060 → `results/modelC.json` (same report shape as Model B)
 
-**Attempt 1 FAILED (do not reuse `results/modelC_epoch3/`)**: Colab phase C trained fp16 master weights directly with AdamW; loss hit inf/NaN in epoch 1 and NN weights came back all-NaN. Fix before retrain: fp32 params + `torch.autocast` on encoder forwards only, NaN-guard on optimizer step, finite-loss assert after first 50 batches.
+**Attempt 1 FAILED (do not reuse `results/modelC_epoch3/`)**: Colab phase C trained fp16 master weights directly with AdamW; loss hit inf/NaN in epoch 1 and NN weights came back all-NaN. Fixed: fp32 params + `torch.autocast` on encoder forwards only, NaN-guard on optimizer step, finite-loss assert after first 50 batches. Attempt 2 succeeded.
+
+**Phase 6 headline**: overall F0.5 **0.9896** (was 0.9632), cross-script F0.5 **0.9946** with recall **99.1%** (precision 99.5% at val-tuned thr 0.702). Recall@1/5/10 = 1.0, MRR = 1.0. Per-script (n in parentheses): Bengali 1.0 (22), Tamil 1.0 (14), Gurmukhi 1.0 (5), Gujarati 1.0 (23), Kannada 1.0 (19), Devanagari 0.997 (763), Telugu 0.913 (23), Malayalam 0.857 (14), Oriya 0.0 (n=1). Contrastive fine-tune gains are largest exactly where the research question lives: cross-script.
 
 ## Phase 7 — Model D: Contrastive + hard negatives (Colab T4)
 
