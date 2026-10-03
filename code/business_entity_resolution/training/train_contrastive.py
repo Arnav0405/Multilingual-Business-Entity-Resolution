@@ -102,21 +102,31 @@ def collate(batch, tokenizer, max_length=64, max_pos=2, max_extra_neg=4):
 
 def train_one_epoch(model, loader, optimizer, scheduler, device) -> float:
     model.train()
-    total, n = 0.0, 0
+    total, n, skipped = 0.0, 0, 0
     optimizer.zero_grad()
-    for batch in loader:
+    for step, batch in enumerate(loader):
         batch = {k: (v.to(device) if v is not None else None) for k, v in batch.items()}
-        a_emb = model(**batch["anchor"]).last_hidden_state[:, 0]
-        p_emb = model(**batch["positive"]).last_hidden_state[:, 0]
-        a_emb = torch.nn.functional.normalize(a_emb.float(), dim=-1)
-        p_emb = torch.nn.functional.normalize(p_emb.float(), dim=-1)
+        # fp32 master weights; fp16 autocast only on the encoder forwards
+        with torch.autocast(device_type=device if device != "cpu" else "cpu",
+                            dtype=torch.float16, enabled=(device != "cpu")):
+            a_raw = model(**batch["anchor"]).last_hidden_state[:, 0]
+            p_raw = model(**batch["positive"]).last_hidden_state[:, 0]
+        a_emb = torch.nn.functional.normalize(a_raw.float(), dim=-1)
+        p_emb = torch.nn.functional.normalize(p_raw.float(), dim=-1)
         extra = None
         if batch["hard"] is not None:
-            h_emb = model(**batch["hard"]).last_hidden_state[:, 0]
-            h_emb = torch.nn.functional.normalize(h_emb.float(), dim=-1)
+            with torch.autocast(device_type=device if device != "cpu" else "cpu",
+                                dtype=torch.float16, enabled=(device != "cpu")):
+                h_raw = model(**batch["hard"]).last_hidden_state[:, 0]
+            h_emb = torch.nn.functional.normalize(h_raw.float(), dim=-1)
             K = h_emb.shape[0] // a_emb.shape[0]
             extra = h_emb.view(a_emb.shape[0], K, -1)
         loss = mnrl(a_emb, p_emb, extra_neg_emb=extra)
+        # NaN guard: one poisoned batch costs one step, not the whole run
+        if not torch.isfinite(loss):
+            skipped += 1
+            optimizer.zero_grad()
+            continue
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
@@ -124,6 +134,11 @@ def train_one_epoch(model, loader, optimizer, scheduler, device) -> float:
         optimizer.zero_grad()
         total += loss.item()
         n += 1
+        if step == 49:
+            assert torch.isfinite(loss), "loss non-finite after 50 steps -- divergence, abort early"
+            print(f"    [health] step-50 loss={loss.item():.4f} (finite)")
+    if skipped:
+        print(f"    [warn] skipped {skipped} non-finite-loss batches")
     return total / max(n, 1)
 
 
@@ -157,8 +172,7 @@ def main() -> None:
     from transformers import AutoModel, AutoTokenizer
     tok = AutoTokenizer.from_pretrained(MODEL_NAME)
     model = AutoModel.from_pretrained(MODEL_NAME).to(device)
-    if device == "cuda":
-        model = model.half()  # fp16 params; loss math in fp32
+    # fp32 master weights (training); inference scoring may use half separately
 
     df = load_pairs(SUBSET / "train_pairs.tsv")
     if args.limit_groups:

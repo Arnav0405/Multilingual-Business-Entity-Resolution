@@ -232,6 +232,8 @@ def dummy():
     loader = DataLoader(ds, batch_size=64, shuffle=True,
         collate_fn=lambda b: collate(b, tok, max_pos=2, max_extra_neg=max_hard), num_workers=2)
     steps = max(len(loader), 1)
+    # NOTE: model stays fp32; autocast is applied per-forward in the train loop
+    model = AutoModel.from_pretrained(MODEL_NAME).to(DEVICE).eval()
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-5, weight_decay=0.01)
     SCHED_TOTAL = steps * 3   # default epochs=3
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=3e-5, total_steps=SCHED_TOTAL)
@@ -241,22 +243,34 @@ def dummy():
     code("""if PHASE in ('C', 'D'):
     import time
     for epoch in range(1, EPOCHS + 1):
-        t0 = time.time(); model.train(); total, n = 0.0, 0
-        for batch in loader:
+        t0 = time.time(); model.train(); skipped = 0
+        total, n = 0.0, 0
+        for step, batch in enumerate(loader):
             batch = {k: (v.to(DEVICE) if v is not None else None) for k, v in batch.items()}
-            a = model(**batch['anchor']).last_hidden_state[:, 0]
-            p = model(**batch['positive']).last_hidden_state[:, 0]
+            # fp32 params + fp16 autocast on encoder forwards only (fp16 master
+            # weights diverged pre-fix: attempt 1 came back all-NaN)
+            with torch.autocast(device_type='cuda', dtype=torch.float16):
+                a = model(**batch['anchor']).last_hidden_state[:, 0]
+                p = model(**batch['positive']).last_hidden_state[:, 0]
             a = F.normalize(a.float(), dim=-1); p = F.normalize(p.float(), dim=-1)
             extra = None
             if batch['hard'] is not None:
-                h = model(**batch['hard']).last_hidden_state[:, 0]
+                with torch.autocast(device_type='cuda', dtype=torch.float16):
+                    h = model(**batch['hard']).last_hidden_state[:, 0]
                 h = F.normalize(h.float(), dim=-1)
                 extra = h.view(a.shape[0], h.shape[0] // a.shape[0], -1)
             loss = mnrl(a, p, extra_neg=extra)
+            if not torch.isfinite(loss):
+                skipped += 1; optimizer.zero_grad(); continue
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step(); scheduler.step(); optimizer.zero_grad()
             total += loss.item(); n += 1
+            if step == 49:
+                assert torch.isfinite(loss), 'loss non-finite after 50 steps -- divergence'
+                print(f'    [health] step-50 loss={loss.item():.4f}')
+        if skipped:
+            print(f'    [warn] skipped {skipped} non-finite batches')
         print(f'epoch {epoch}/{EPOCHS}: loss={total/max(n,1):.4f} ({time.time()-t0:.0f}s)')
         ckpt = f'/content/model{PHASE}_epoch{epoch}'
         model.save_pretrained(ckpt, safe_serialization=True)
@@ -266,12 +280,19 @@ def dummy():
     md("""## Phase C / D — score with the fine-tuned encoder
 """),
     code("""if PHASE in ('C', 'D'):
+    # load FRESH from the fine-tuned checkpoint (fp32->half for scoring only)
     LATEST = f'/content/model{PHASE}_epoch{EPOCHS}'
-    model = AutoModel.from_pretrained(LATEST).to(DEVICE).eval().half()
+    model = AutoModel.from_pretrained(LATEST).to(DEVICE).eval()
+    model = model.half()
+    # NaN check BEFORE wasting 30 minutes scoring
+    import torch as _t
+    bad = [k for k, v in model.state_dict().items() if _t.isnan(v.float()).any()]
+    assert not bad, f'checkpoint has NaN tensors: {bad[:5]} -- retrain, do not score'
     scores = {}
     for split in ('train', 'val', 'test'):
         df = load_pairs(split)
         scores[split] = score_split(df, TEXT_VARIANT)
+        assert np.isfinite(scores[split]).all(), f'{split}: non-finite scores'
         print(split, len(df), 'pairs, mean cos', float(np.mean(scores[split])))
     pd.concat(
         [pd.DataFrame({'split': s, 'row_idx': load_pairs(s)['row_idx'], 'score': scores[s]}) for s in scores]
