@@ -85,8 +85,14 @@ Goal: reproducible runtime locally (RTX 4060) and on Colab (T4); model download 
 
 ## Phase 10 — Address experiment (optional, after name-only works)
 
-- [ ] Experiment A vs B: name-only vs `Business name: ...\nAddress: ...` raw concatenation, same trainer, no handcrafted address features
-- [ ] Scores + report in the same shape
+- [x] Experiment A vs B: name-only vs `Business name: ...\nAddress: ...` raw concatenation, same trainer, no handcrafted address features — `PHASE="ADDR"` in the notebook (MAX_LENGTH 128, batch 32), NaN-address fix in the scoring path (commit 5c9aa10)
+- [x] Scores + report in the same shape — `results/phase10_address_experiment.json` (+ `modelA_name_address_scores.parquet`)
+
+**Phase 10 headline (A′ = D trainer + address concat)**: overall F0.5 **0.9969** vs D's 0.9895 — largest single jump since B→C. Controlled verdict (same pairs, per-model val thresholds):
+- **addr_both slice (n_pos=4285/4304, the honest control)**: A′ 0.9973 vs D 0.9893 — address context genuinely helps where addresses exist (precision 0.9993, 8 FPs→0)
+- **addr_missing slice (n_pos=173/180)**: A′ 0.9882 vs D 0.9954 — *hurts* when addresses are empty (the forced `Address: ` empty marker is a slightly misleading input)
+- cross-script: A′ 0.9993 (0 FP, 3 FN) vs D 0.9946
+- **net research answer**: yes — contextual address info improves multilingual entity resolution, worth +0.0074 overall F0.5, provided addresses are present; the model learns to use them from raw concat alone with zero handcrafted features. For deployment/thresholding this means: name-only model for sparse-record lookups, A′ where address fields are populated.
 
 ## Phase 11 — Report
 
