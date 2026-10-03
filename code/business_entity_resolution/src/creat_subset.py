@@ -602,15 +602,12 @@ print(
 
 
 # ============================================================
-# 5. SAVE SELECTED S1
+# 5. REGISTER SELECTED S1 IN DUCKDB
+# (selected_s1.tsv is written later -- section 5b -- AFTER the
+# resume/reconcile step, so that on a resumed run the file on
+# disk reflects the ADOPTED staged population, not the fresh
+# in-memory sample, and exactly tiles train/val/test.)
 # ============================================================
-
-selected.to_csv(
-    OUT / "selected_s1.tsv",
-    sep="\t",
-    index=False
-)
-
 
 # Register selected S1 IDs in DuckDB (used by all pair queries).
 
@@ -695,6 +692,22 @@ if table_exists(f"seed{SEED}_selected"):
         if table_exists(rebuild_target):
             con.execute(f"DROP TABLE {rebuild_target}")
             print(f"[REBUILD] dropped {rebuild_target} (population mismatch)")
+
+
+# ============================================================
+# 5b. SAVE SELECTED S1
+#
+# Runs AFTER the resume/reconcile block above, so the file on
+# disk is written from the ADOPTED population when a staged run
+# was resumed, and always exactly tiles the train/val/test
+# splits written further below.
+# ============================================================
+
+selected.to_csv(
+    OUT / "selected_s1.tsv",
+    sep="\t",
+    index=False
+)
 
 
 # ============================================================
