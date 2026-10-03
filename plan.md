@@ -111,7 +111,25 @@ generation, leaderboard pipeline, DoRA — none of these get built.
 ## Notes
 
 - Row-order dependence: any re-scoring must use the same `load_split_pairs` order
-  (train dedup on name-pairs happens in `tfidf.py` — val/test are untouched).
+  (train dedupe on name-pairs happens in `tfidf.py` — val/test are untouched).
 - `subset_staging.duckdb` (4.6 GB) is deletable; everything reproducible from source TSVs.
 - Cross-script definition at eval time = set-of-Unicode-script difference between raw S1
   name and raw candidate name (evaluates transliteration only, not Latin-noise variants).
+
+---
+
+## Central results table (final, all through one shared eval path)
+
+Test split, 19,558 pairs, 884 cross-script positives. Threshold = each model's val-tuned F0.5 optimum, applied unchanged.
+
+| Model | Overall F0.5 | Same-Script F0.5 | Cross-Script F0.5 | Cross Recall | Recall@1 | MRR |
+|---|---:|---:|---:|---:|---:|---:|
+| tfidf_char | 0.9292 | 0.9745 | 0.1132 | 2.5% | 0.9397 | 0.9493 |
+| tfidf_word | 0.8967 | 0.9411 | 0.2052 | 5.0% | 0.9389 | 0.9540 |
+| tfidf_both | 0.9217 | 0.9656 | 0.1779 | 4.2% | 0.9405 | 0.9499 |
+| modelB (E5 pretrained) | 0.9634 | 0.9714 | 0.9317 | 86.8% | 0.9992 | 0.9996 |
+| modelC (+contrastive) | 0.9896 | 0.9883 | 0.9946 | 99.1% | 1.0000 | 1.0000 |
+| modelD (+hard negatives) | 0.9895 | 0.9883 | 0.9946 | 99.5% | 1.0000 | 1.0000 |
+| **A′ (+address concat)** | **0.9969** | — | **0.9993** | 99.7% (0 FP) | 1.0000 | 1.0000 |
+
+Per-script cross-script recall (n in parentheses): Devanagari 1.00 (763, D/A′), Telugu 1.00 (23, D), Bengali 1.00 (22), Tamil 1.00 (14), Gurmukhi 1.00 (5), Gujarati 0.96 (23), Kannada 1.00 (19), Malayalam 0.86 (14), Oriya 0.00 (**n=1** — anecdotal).
