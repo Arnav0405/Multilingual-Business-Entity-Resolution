@@ -138,4 +138,4 @@ cd code/business_entity_resolution/training
 - 6,044 cross-script positives (4,290 train / 870 val / 884 test)
 - Test cross-script positives: **884**
 
-Full narrative, per-script tables, error analysis, and figures are in [`report.md`](../../report.md).
+Full narrative, per-script tables, error analysis, and figures are in [`report.md`](report.md).
