@@ -1,0 +1,3 @@
+# Generated demo artifacts (large / rebuildable) — excluded from git.
+demo_corpus.tsv
+*.npy
